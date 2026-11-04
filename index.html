@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ご注文</title>
+<script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<style>
+  :root { --green:#06c755; --green-d:#05a647; --bg:#f5f6f7; --line:#dfe3e6; --text:#222; --sub:#666; --red:#d93025; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif; background:var(--bg); color:var(--text); font-size:16px; line-height:1.6; }
+  header { background:var(--green); color:#fff; padding:14px 16px; font-weight:700; font-size:18px; position:sticky; top:0; z-index:5; }
+  main { padding:16px; max-width:560px; margin:0 auto 80px; }
+  .card { background:#fff; border-radius:12px; padding:16px; margin-bottom:14px; box-shadow:0 1px 2px rgba(0,0,0,.05); }
+  h2 { font-size:17px; margin:0 0 12px; }
+  h3 { font-size:15px; margin:16px 0 8px; }
+  label { display:block; font-size:14px; color:var(--sub); margin:12px 0 4px; }
+  .req::after { content:"必須"; background:var(--red); color:#fff; font-size:11px; padding:1px 6px; border-radius:4px; margin-left:6px; }
+  input[type=text],input[type=tel],input[type=email],input[type=date],input[type=number],select,textarea {
+    width:100%; padding:11px 12px; font-size:16px; border:1px solid var(--line); border-radius:8px; background:#fff; color:var(--text); }
+  textarea { min-height:70px; resize:vertical; }
+  button { font-size:16px; border:none; border-radius:10px; padding:14px; width:100%; cursor:pointer; font-weight:700; }
+  .btn { background:var(--green); color:#fff; }
+  .btn:active { background:var(--green-d); }
+  .btn:disabled { background:#aaa; }
+  .btn-sub { background:#fff; color:var(--text); border:1px solid var(--line); margin-top:10px; }
+  .btn-small { width:auto; padding:6px 12px; font-size:14px; font-weight:400; }
+  .type-btn { display:block; text-align:left; background:#fff; border:1px solid var(--line); margin-bottom:10px; padding:14px 16px; font-weight:700; }
+  .type-btn small { display:block; font-weight:400; color:var(--sub); font-size:13px; }
+  .type-btn:disabled { opacity:.45; }
+  .item { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 0; border-bottom:1px solid var(--line); }
+  .item:last-child { border-bottom:none; }
+  .item .name { font-weight:600; }
+  .item .price { font-size:13px; color:var(--sub); }
+  .stepper { display:flex; align-items:center; gap:4px; flex-shrink:0; }
+  .stepper button { width:36px; height:36px; padding:0; border-radius:50%; background:#eef1f3; color:var(--text); font-size:20px; line-height:1; }
+  .stepper input { width:52px; text-align:center; padding:6px; }
+  .radio { display:flex; gap:16px; margin:6px 0; }
+  .radio label { display:flex; align-items:center; gap:6px; margin:0; color:var(--text); font-size:15px; }
+  .recipient { border:1px solid var(--line); border-radius:10px; padding:12px; margin-bottom:12px; }
+  .recipient-head { display:flex; justify-content:space-between; align-items:center; }
+  .info { background:#f0faf3; border-radius:8px; padding:10px 12px; font-size:14px; }
+  .muted { color:var(--sub); font-size:14px; }
+  .error { background:#fdecea; color:var(--red); border-radius:8px; padding:10px 12px; margin-bottom:12px; white-space:pre-wrap; }
+  .summary { white-space:pre-wrap; font-size:15px; background:#fafafa; border-radius:8px; padding:12px; }
+  .badge { display:inline-block; font-size:12px; padding:1px 8px; border-radius:10px; background:#eee; margin-left:6px; }
+  .badge.ok { background:#e3f6ea; color:#0a7d3b; }
+  .badge.wait { background:#fff4e0; color:#a35b00; }
+  .hidden { display:none !important; }
+  .center { text-align:center; }
+  .spinner { width:36px; height:36px; border:4px solid #ddd; border-top-color:var(--green); border-radius:50%; animation:spin 1s linear infinite; margin:40px auto 12px; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .demo { background:#fff4e0; color:#a35b00; text-align:center; font-size:13px; padding:4px; }
+</style>
+</head>
+<body>
+<div id="demoBar" class="demo hidden">デモモード（LINE・スプレッドシートには送信されません）</div>
+<header id="title">ご注文</header>
+<main>
+  <div id="err" class="error hidden"></div>
+
+  <!-- 読み込み中 -->
+  <section id="vLoading" class="center"><div class="spinner"></div><p class="muted" id="loadingText">読み込み中…</p></section>
+
+  <!-- お客様情報の登録・変更 -->
+  <section id="vCustomer" class="hidden">
+    <div class="card">
+      <h2 id="custTitle">お客様情報の登録</h2>
+      <p class="muted" id="custLead">初回のみご登録ください。次回からは自動で入力されます。</p>
+      <label class="req">お名前</label><input type="text" id="cName" autocomplete="name" placeholder="山田 太郎">
+      <label>フリガナ</label><input type="text" id="cKana" placeholder="ヤマダ タロウ">
+      <label class="req">郵便番号（7桁）</label><input type="tel" id="cZip" autocomplete="postal-code" placeholder="123-4567">
+      <label class="req">住所</label><textarea id="cAddress" autocomplete="street-address" placeholder="都道府県から入力してください"></textarea>
+      <label class="req">電話番号</label><input type="tel" id="cTel" autocomplete="tel" placeholder="090-1234-5678">
+      <label>メールアドレス</label><input type="email" id="cEmail" autocomplete="email">
+    </div>
+    <button class="btn" id="btnSaveCustomer">登録して次へ</button>
+    <button class="btn-sub hidden" id="btnCancelCustomer">戻る</button>
+  </section>
+
+  <!-- 注文の種類を選ぶ -->
+  <section id="vMenu" class="hidden">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <h2 style="margin:0" id="hello"></h2>
+        <button class="btn-sub btn-small" style="margin:0" id="btnEditCustomer">登録情報の変更</button>
+      </div>
+      <p class="muted" id="custSummary" style="margin:8px 0 0"></p>
+    </div>
+    <div class="card">
+      <h2>注文の種類を選んでください</h2>
+      <button class="type-btn" data-type="annual_apply">① 年間予約の申込み<small>1年分の数量を予約します（農園の承認後に確定）</small></button>
+      <button class="type-btn" data-type="annual_monthly" id="btnMonthly">② 年間予約の毎月注文<small id="monthlyNote">予約済みの数量から毎月ご注文いただけます</small></button>
+      <button class="type-btn" data-type="single">③ 単発の注文<small>1回だけのご注文</small></button>
+      <button class="type-btn" data-type="gift">④ 宅急便・地方発送（贈答）<small>贈り物として、ご指定の住所へ発送します</small></button>
+    </div>
+    <div class="card hidden" id="annualCard">
+      <h2>年間予約の状況</h2>
+      <div id="annualList"></div>
+    </div>
+  </section>
+
+  <!-- 入力フォーム -->
+  <section id="vForm" class="hidden">
+    <div id="formBody"></div>
+    <button class="btn" id="btnToConfirm">確認画面へ</button>
+    <button class="btn-sub" id="btnBackMenu">戻る</button>
+  </section>
+
+  <!-- 確認 -->
+  <section id="vConfirm" class="hidden">
+    <div class="card">
+      <h2>ご注文内容の確認</h2>
+      <div class="summary" id="confirmText"></div>
+    </div>
+    <button class="btn" id="btnSubmit">注文を送信する</button>
+    <button class="btn-sub" id="btnBackForm">修正する</button>
+  </section>
+
+  <!-- 完了 -->
+  <section id="vDone" class="hidden">
+    <div class="card center">
+      <h2 id="doneTitle">ご注文を受け付けました</h2>
+      <p class="muted" id="doneLead">LINEのトークに注文内容をお送りしました。</p>
+      <div class="summary" style="text-align:left" id="doneText"></div>
+    </div>
+    <button class="btn" id="btnClose">閉じる</button>
+    <button class="btn-sub" id="btnAgain">続けて注文する</button>
+  </section>
+</main>
+
+<script>
+// ====== 設定（ここを書き換えてください） ======
+const LIFF_ID = '2012366207-YeWvnlsZ';            // 例: 2000000000-AbCdEfGh
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbx3MA4sXmPw2dxJ6Xr1Rbbtfmw2BAC9f9UpHACHHDqcPd5uPqvqpEkCnR5WnwaZi-Ts/exec';   // 例: https://script.google.com/macros/s/xxxx/exec
+// ===========================================
+
+const DEMO = new URLSearchParams(location.search).has('demo');
+const TYPE_LABEL = {
+  annual_apply: '①年間予約の申込み', annual_monthly: '②年間予約の毎月注文',
+  single: '③単発の注文', gift: '④宅急便・地方発送',
+};
+const S = { products: [], customer: null, annuals: [], timeSlots: [], noshiTypes: [], type: null, order: null };
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+const yen = n => '¥' + Number(n).toLocaleString('ja-JP');
+const views = ['vLoading', 'vCustomer', 'vMenu', 'vForm', 'vConfirm', 'vDone'];
+function show(id) { views.forEach(v => $(v).classList.toggle('hidden', v !== id)); window.scrollTo(0, 0); }
+function showError(msg) { $('err').textContent = msg; $('err').classList.remove('hidden'); window.scrollTo(0, 0); }
+function clearError() { $('err').classList.add('hidden'); }
+function productById(id) { return S.products.find(p => p.id === id); }
+
+// ---------- 通信 ----------
+async function api(action, payload) {
+  if (DEMO) return demoApi(action, payload);
+  const idToken = liff.getIDToken();
+  const res = await fetch(GAS_URL, { method: 'POST', body: JSON.stringify(Object.assign({ action, idToken }, payload)) });
+  const data = await res.json();
+  if (!data.ok) {
+    if (data.code === 'TOKEN' && liff.isLoggedIn()) { liff.logout(); liff.login({ redirectUri: location.href }); }
+    throw new Error(data.error || 'エラーが発生しました。');
+  }
+  return data;
+}
+
+// ---------- 起動 ----------
+async function start() {
+  try {
+    if (DEMO) {
+      $('demoBar').classList.remove('hidden');
+    } else {
+      await liff.init({ liffId: LIFF_ID });
+      if (!liff.isLoggedIn()) { liff.login({ redirectUri: location.href }); return; }
+    }
+    const data = await api('init', {});
+    Object.assign(S, { products: data.products, customer: data.customer, annuals: data.annuals,
+      timeSlots: data.timeSlots, noshiTypes: data.noshiTypes });
+    if (S.customer) renderMenu(); else openCustomer(false);
+  } catch (e) {
+    show('vLoading'); $('loadingText').textContent = '';
+    showError('読み込みに失敗しました。\n' + e.message + '\n\nLINEのトーク画面から開き直してください。');
+  }
+}
+
+// ---------- お客様情報 ----------
+function openCustomer(isEdit) {
+  const c = S.customer || {};
+  $('cName').value = c.name || ''; $('cKana').value = c.kana || ''; $('cZip').value = c.zip || '';
+  $('cAddress').value = c.address || ''; $('cTel').value = c.tel || ''; $('cEmail').value = c.email || '';
+  $('custTitle').textContent = isEdit ? '登録情報の変更' : 'お客様情報の登録';
+  $('custLead').textContent = isEdit ? '変更内容は次回以降のご注文にも反映されます。' : '初回のみご登録ください。次回からは自動で入力されます。';
+  $('btnSaveCustomer').textContent = isEdit ? '変更を保存' : '登録して次へ';
+  $('btnCancelCustomer').classList.toggle('hidden', !isEdit);
+  clearError(); show('vCustomer');
+}
+
+function readCustomerForm() {
+  const c = { name: $('cName').value.trim(), kana: $('cKana').value.trim(), zip: $('cZip').value.trim(),
+    address: $('cAddress').value.trim(), tel: $('cTel').value.trim(), email: $('cEmail').value.trim() };
+  const errs = [];
+  if (!c.name) errs.push('お名前を入力してください。');
+  if (!validZip(c.zip)) errs.push('郵便番号を7桁で入力してください。');
+  if (!c.address) errs.push('住所を入力してください。');
+  if (!validTel(c.tel)) errs.push('電話番号を正しく入力してください。');
+  return { c, errs };
+}
+function normDigits(s) { return String(s).replace(/[０-９]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0)); }
+function validZip(s) { return normDigits(s).replace(/[^0-9]/g, '').length === 7; }
+function validTel(s) { const d = normDigits(s).replace(/[^0-9]/g, ''); return d.length >= 10 && d.length <= 11; }
+
+$('btnSaveCustomer').onclick = async () => {
+  const { c, errs } = readCustomerForm();
+  if (errs.length) return showError(errs.join('\n'));
+  const btn = $('btnSaveCustomer'); btn.disabled = true;
+  try {
+    const data = await api('saveCustomer', { customer: c });
+    S.customer = data.customer; clearError(); renderMenu();
+  } catch (e) { showError(e.message); }
+  finally { btn.disabled = false; }
+};
+$('btnCancelCustomer').onclick = () => { clearError(); renderMenu(); };
+$('btnEditCustomer').onclick = () => openCustomer(true);
+
+// ---------- メニュー ----------
+function usableAnnuals() { return S.annuals.filter(a => a.status === '承認済' && a.remaining > 0); }
+
+function renderMenu() {
+  const c = S.customer;
+  $('hello').textContent = c.name + ' 様';
+  $('custSummary').textContent = '〒' + c.zip + ' ' + c.address + ' / ' + c.tel;
+  const usable = usableAnnuals();
+  $('btnMonthly').disabled = usable.length === 0;
+  $('monthlyNote').textContent = usable.length ? '予約済みの数量から毎月ご注文いただけます' : '承認済みの年間予約がある方が対象です';
+  if (S.annuals.length) {
+    $('annualCard').classList.remove('hidden');
+    $('annualList').innerHTML = S.annuals.map(a => {
+      const cls = a.status === '承認済' ? 'ok' : a.status === '承認待ち' ? 'wait' : '';
+      return '<div class="item"><div><div class="name">' + esc(a.productName) + '<span class="badge ' + cls + '">' + esc(a.status) + '</span></div>' +
+        '<div class="price">契約 ' + a.contract + esc(a.unit) + '・注文済 ' + a.ordered + esc(a.unit) + '</div></div>' +
+        '<div><b>残り ' + a.remaining + esc(a.unit) + '</b></div></div>';
+    }).join('');
+  } else { $('annualCard').classList.add('hidden'); }
+  $('title').textContent = 'ご注文';
+  show('vMenu');
+}
+
+document.querySelectorAll('.type-btn').forEach(b => b.onclick = () => openForm(b.dataset.type));
+
+// ---------- 入力フォーム ----------
+function stepperHtml(key, max) {
+  return '<div class="stepper"><button type="button" data-step="-1" data-key="' + key + '">−</button>' +
+    '<input type="number" inputmode="numeric" min="0" max="' + max + '" value="0" data-qty="' + key + '">' +
+    '<button type="button" data-step="1" data-key="' + key + '">＋</button></div>';
+}
+function productListHtml(list, prefix) {
+  if (!list.length) return '<p class="muted">対象の商品がありません。</p>';
+  return list.map(p => '<div class="item"><div><div class="name">' + esc(p.name) + '</div>' +
+    '<div class="price">' + yen(p.price) + ' / ' + esc(p.unit) + (p.description ? '・' + esc(p.description) : '') + '</div></div>' +
+    stepperHtml(prefix + '|' + p.id, 999) + '</div>').join('');
+}
+function addressFields(prefix, v) {
+  v = v || {};
+  return '<label class="req">お名前</label><input type="text" id="' + prefix + 'Name" value="' + esc(v.name) + '">' +
+    '<label class="req">郵便番号（7桁）</label><input type="tel" id="' + prefix + 'Zip" value="' + esc(v.zip) + '" placeholder="123-4567">' +
+    '<label class="req">住所</label><textarea id="' + prefix + 'Address">' + esc(v.address) + '</textarea>' +
+    '<label class="req">電話番号</label><input type="tel" id="' + prefix + 'Tel" value="' + esc(v.tel) + '">';
+}
+function deliveryHtml() {
+  const c = S.customer;
+  return '<div class="card"><h2>お届け先</h2>' +
+    '<div class="radio"><label><input type="radio" name="dest" value="self" checked>登録住所</label>' +
+    '<label><input type="radio" name="dest" value="other">別の住所</label></div>' +
+    '<div class="info" id="destSelf">' + esc(c.name) + ' 様<br>〒' + esc(c.zip) + ' ' + esc(c.address) + '</div>' +
+    '<div id="destOther" class="hidden">' + addressFields('d') + '</div></div>';
+}
+function minDate(days) { const d = new Date(); d.setDate(d.getDate() + days); return d.toISOString().slice(0, 10); }
+function dateHtml(withTime) {
+  return '<div class="card"><h2>ご希望のお届け日</h2><label>希望日（任意）</label>' +
+    '<input type="date" id="fDate" min="' + minDate(2) + '">' +
+    (withTime ? '<label>希望時間帯</label><select id="fTime">' + S.timeSlots.map(t => '<option>' + esc(t) + '</option>').join('') + '</select>' : '') +
+    '</div>';
+}
+function noteHtml() { return '<div class="card"><label style="margin-top:0">備考（任意）</label><textarea id="fNote" maxlength="500"></textarea></div>'; }
+
+let recipientCount = 0;
+function recipientHtml(n) {
+  const giftProducts = S.products.filter(p => p.gift);
+  return '<div class="recipient" data-rcp="' + n + '"><div class="recipient-head"><h3 style="margin:0">お届け先 <span class="rnum"></span></h3>' +
+    '<button type="button" class="btn-sub btn-small" style="margin:0" data-remove="' + n + '">削除</button></div>' +
+    addressFields('r' + n) + '<h3>贈る商品</h3>' + productListHtml(giftProducts, 'r' + n) + '</div>';
+}
+function renumberRecipients() {
+  const list = document.querySelectorAll('.recipient');
+  list.forEach((el, i) => { el.querySelector('.rnum').textContent = i + 1; el.querySelector('[data-remove]').classList.toggle('hidden', list.length === 1); });
+  const add = $('btnAddRcp'); if (add) add.classList.toggle('hidden', list.length >= 10);
+}
+
+function openForm(type) {
+  S.type = type; clearError();
+  $('title').textContent = TYPE_LABEL[type];
+  let html = '';
+  if (type === 'annual_apply') {
+    html += '<div class="card"><h2>年間の予約数量</h2><p class="muted">1年間でお受け取りになる合計数量を選んでください。農園の承認後に確定します。</p>' +
+      productListHtml(S.products.filter(p => p.annual), 'a') + '</div>' + noteHtml();
+  } else if (type === 'annual_monthly') {
+    const list = usableAnnuals();
+    html += '<div class="card"><h2>年間予約から注文</h2><label class="req">予約</label><select id="fAnnual">' +
+      list.map(a => '<option value="' + esc(a.id) + '">' + esc(a.productName) + '（残り ' + a.remaining + esc(a.unit) + '）</option>').join('') +
+      '</select><div class="info" id="remainInfo" style="margin-top:10px"></div>' +
+      '<label class="req">今回の数量</label><div id="monthlyQty"></div></div>' + deliveryHtml() + dateHtml(false) + noteHtml();
+  } else if (type === 'single') {
+    html += '<div class="card"><h2>商品と数量</h2>' + productListHtml(S.products, 's') + '</div>' + deliveryHtml() + dateHtml(false) + noteHtml();
+  } else if (type === 'gift') {
+    recipientCount = 0;
+    html += '<div class="card"><h2>お届け先と商品</h2><p class="muted">複数の方へ贈る場合は「お届け先を追加」を押してください（最大10件）。送料は別途ご連絡します。</p>' +
+      '<div id="rcpList"></div><button type="button" class="btn-sub" id="btnAddRcp">＋ お届け先を追加</button></div>' +
+      '<div class="card"><h2>のし・メッセージ</h2><label>のし</label><select id="fNoshi">' +
+      S.noshiTypes.map(t => '<option>' + esc(t) + '</option>').join('') + '</select>' +
+      '<div id="noshiNameWrap" class="hidden"><label>名入れ（贈り主のお名前）</label><input type="text" id="fNoshiName" maxlength="30" value="' + esc(S.customer.name) + '"></div>' +
+      '<label>メッセージカード（任意・200字まで）</label><textarea id="fMessage" maxlength="200"></textarea></div>' +
+      dateHtml(true) + noteHtml();
+  }
+  $('formBody').innerHTML = html;
+
+  if (type === 'annual_monthly') {
+    const upd = () => {
+      const a = S.annuals.find(x => x.id === $('fAnnual').value);
+      $('remainInfo').textContent = '契約 ' + a.contract + a.unit + ' / 注文済 ' + a.ordered + a.unit + ' / 残り ' + a.remaining + a.unit;
+      $('monthlyQty').innerHTML = stepperHtml('m|' + a.id, a.remaining);
+    };
+    $('fAnnual').onchange = upd; upd();
+  }
+  if (type === 'gift') {
+    const add = () => { $('rcpList').insertAdjacentHTML('beforeend', recipientHtml(++recipientCount)); renumberRecipients(); };
+    $('btnAddRcp').onclick = add; add();
+    $('fNoshi').onchange = () => $('noshiNameWrap').classList.toggle('hidden', $('fNoshi').value === 'なし');
+  }
+  show('vForm');
+}
+
+// フォーム内のクリック（数量の＋−、お届け先の削除、お届け先の切替）
+$('formBody').addEventListener('click', e => {
+  const t = e.target;
+  if (t.dataset.step) {
+    const input = document.querySelector('[data-qty="' + t.dataset.key + '"]');
+    const max = Number(input.max) || 999;
+    input.value = Math.min(max, Math.max(0, (Number(input.value) || 0) + Number(t.dataset.step)));
+  } else if (t.dataset.remove) {
+    t.closest('.recipient').remove(); renumberRecipients();
+  }
+});
+$('formBody').addEventListener('change', e => {
+  if (e.target.name === 'dest') {
+    const other = e.target.value === 'other';
+    $('destOther').classList.toggle('hidden', !other); $('destSelf').classList.toggle('hidden', other);
+  }
+});
+
+function qtyItems(prefix, root) {
+  return Array.from((root || document).querySelectorAll('[data-qty^="' + prefix + '|"]'))
+    .map(i => ({ productId: i.dataset.qty.split('|')[1], qty: Math.floor(Number(i.value) || 0) }))
+    .filter(i => i.qty > 0);
+}
+function readAddress(prefix) {
+  return { name: $(prefix + 'Name').value.trim(), zip: $(prefix + 'Zip').value.trim(),
+    address: $(prefix + 'Address').value.trim(), tel: $(prefix + 'Tel').value.trim() };
+}
+function addrErrors(a, label) {
+  const e = [];
+  if (!a.name) e.push(label + 'のお名前を入力してください。');
+  if (!validZip(a.zip)) e.push(label + 'の郵便番号を7桁で入力してください。');
+  if (!a.address) e.push(label + 'の住所を入力してください。');
+  if (!validTel(a.tel)) e.push(label + 'の電話番号を正しく入力してください。');
+  return e;
+}
+function readDelivery(errs) {
+  const other = document.querySelector('input[name=dest]:checked').value === 'other';
+  if (!other) return { useOther: false };
+  const a = readAddress('d'); errs.push(...addrErrors(a, 'お届け先'));
+  return Object.assign({ useOther: true }, a);
+}
+
+function buildOrder() {
+  const errs = [];
+  const o = { type: S.type, customer: S.customer, note: $('fNote').value.trim() };
+  if (S.type === 'annual_apply') {
+    o.items = qtyItems('a'); if (!o.items.length) errs.push('商品と数量を選んでください。');
+  } else if (S.type === 'annual_monthly') {
+    o.annualId = $('fAnnual').value;
+    const a = S.annuals.find(x => x.id === o.annualId);
+    o.qty = (qtyItems('m')[0] || {}).qty || 0;
+    if (!o.qty) errs.push('今回の数量を選んでください。');
+    if (a && o.qty > a.remaining) errs.push('残数量を超えています。');
+    o.delivery = readDelivery(errs); o.date = $('fDate').value;
+  } else if (S.type === 'single') {
+    o.items = qtyItems('s'); if (!o.items.length) errs.push('商品と数量を選んでください。');
+    o.delivery = readDelivery(errs); o.date = $('fDate').value;
+  } else if (S.type === 'gift') {
+    o.recipients = Array.from(document.querySelectorAll('.recipient')).map((el, i) => {
+      const n = el.dataset.rcp; const a = readAddress('r' + n);
+      errs.push(...addrErrors(a, 'お届け先' + (i + 1)));
+      a.items = qtyItems('r' + n, el);
+      if (!a.items.length) errs.push('お届け先' + (i + 1) + 'の商品と数量を選んでください。');
+      return a;
+    });
+    o.noshi = $('fNoshi').value; o.noshiName = $('fNoshiName').value.trim(); o.message = $('fMessage').value.trim();
+    o.date = $('fDate').value; o.time = $('fTime').value;
+  }
+  return { o, errs };
+}
+
+function confirmText(o) {
+  const c = S.customer; const L = [];
+  const lineOf = it => { const p = productById(it.productId); return '・' + p.name + ' × ' + it.qty + p.unit + '　' + yen(p.price * it.qty); };
+  const destOf = d => d.useOther === false ? c : d;
+  let total = 0;
+  L.push('種類：' + TYPE_LABEL[o.type]); L.push('ご注文者：' + c.name + ' 様'); L.push('');
+  if (o.type === 'annual_apply') {
+    L.push('■年間予約数量'); o.items.forEach(it => { const p = productById(it.productId); L.push('・' + p.name + ' 年間 ' + it.qty + p.unit); });
+    L.push(''); L.push('※農園の承認後に確定します。');
+  } else if (o.type === 'annual_monthly') {
+    const a = S.annuals.find(x => x.id === o.annualId);
+    L.push('■商品'); L.push('・' + a.productName + ' × ' + o.qty + a.unit + '（残り ' + (a.remaining - o.qty) + a.unit + ' になります）');
+    const d = destOf(o.delivery); L.push(''); L.push('■お届け先：' + d.name + ' 様'); L.push('〒' + d.zip + ' ' + d.address);
+  } else if (o.type === 'single') {
+    L.push('■商品'); o.items.forEach(it => { L.push(lineOf(it)); total += productById(it.productId).price * it.qty; });
+    const d = destOf(o.delivery); L.push(''); L.push('■お届け先：' + d.name + ' 様'); L.push('〒' + d.zip + ' ' + d.address);
+    L.push(''); L.push('合計：' + yen(total));
+  } else if (o.type === 'gift') {
+    o.recipients.forEach((r, i) => {
+      L.push('■お届け先' + (i + 1) + '：' + r.name + ' 様'); L.push('〒' + r.zip + ' ' + r.address);
+      r.items.forEach(it => { L.push(lineOf(it)); total += productById(it.productId).price * it.qty; }); L.push('');
+    });
+    L.push('合計：' + yen(total) + '（送料別）');
+    if (o.noshi !== 'なし') L.push('のし：' + o.noshi + (o.noshiName ? '（' + o.noshiName + '）' : ''));
+    if (o.message) L.push('メッセージ：' + o.message);
+  }
+  if (o.date) L.push('希望日：' + o.date + (o.time && o.time !== '指定なし' ? ' ' + o.time : ''));
+  if (o.note) L.push('備考：' + o.note);
+  return L.join('\n');
+}
+
+$('btnToConfirm').onclick = () => {
+  const { o, errs } = buildOrder();
+  if (errs.length) return showError(errs.join('\n'));
+  S.order = o; clearError();
+  $('confirmText').textContent = confirmText(o);
+  show('vConfirm');
+};
+$('btnBackMenu').onclick = () => { clearError(); renderMenu(); };
+$('btnBackForm').onclick = () => { clearError(); show('vForm'); };
+
+$('btnSubmit').onclick = async () => {
+  const btn = $('btnSubmit'); btn.disabled = true; btn.textContent = '送信中…';
+  try {
+    const data = await api('order', { order: S.order });
+    const isApply = S.order.type === 'annual_apply';
+    $('doneTitle').textContent = isApply ? 'お申込みを受け付けました' : 'ご注文を受け付けました';
+    $('doneLead').textContent = data.pushed ? 'LINEのトークに内容をお送りしました。'
+      : '※LINEのトークへの通知は送れませんでした。公式アカウントを友だち追加してください。';
+    $('doneText').textContent = data.message;
+    const init = await api('init', {}); S.annuals = init.annuals; S.products = init.products;
+    clearError(); show('vDone');
+  } catch (e) { showError(e.message); }
+  finally { btn.disabled = false; btn.textContent = '注文を送信する'; }
+};
+$('btnClose').onclick = () => { if (!DEMO && liff.isInClient()) liff.closeWindow(); else renderMenu(); };
+$('btnAgain').onclick = () => renderMenu();
+
+// ---------- デモ用（?demo=1 で開いたときだけ使用） ----------
+const demoDB = {
+  customer: null,
+  products: [
+    { id:'P001', name:'お米 5kg（テスト）', unit:'袋', price:3000, annual:true, gift:true, active:true, description:'' },
+    { id:'P002', name:'お米 10kg（テスト）', unit:'袋', price:5800, annual:true, gift:true, active:true, description:'' },
+    { id:'P003', name:'季節の野菜セット（テスト）', unit:'箱', price:2500, annual:false, gift:true, active:true, description:'' },
+    { id:'P004', name:'新米ギフト 2kg（テスト）', unit:'箱', price:2000, annual:false, gift:true, active:true, description:'化粧箱入り' },
+  ],
+  annuals: [{ id:'Y-DEMO-1', status:'承認済', productId:'P001', productName:'お米 5kg（テスト）', unit:'袋', contract:12, ordered:3, remaining:9 }],
+};
+async function demoApi(action, p) {
+  await new Promise(r => setTimeout(r, 300));
+  if (action === 'init') return { ok:true, customer: demoDB.customer, products: demoDB.products, annuals: demoDB.annuals,
+    timeSlots:['指定なし','午前中','14〜16時','16〜18時','18〜20時','19〜21時'], noshiTypes:['なし','御歳暮','御中元','御祝','内祝','御礼','粗品'] };
+  if (action === 'saveCustomer') { demoDB.customer = p.customer; return { ok:true, customer: p.customer }; }
+  if (action === 'order') {
+    if (p.order.type === 'annual_monthly') { const a = demoDB.annuals.find(x => x.id === p.order.annualId); a.ordered += p.order.qty; a.remaining -= p.order.qty; }
+    if (p.order.type === 'annual_apply') p.order.items.forEach(it => { const pr = demoDB.products.find(x => x.id === it.productId);
+      demoDB.annuals.push({ id:'Y-DEMO-' + (demoDB.annuals.length + 1), status:'承認待ち', productId:pr.id, productName:pr.name, unit:pr.unit, contract:it.qty, ordered:0, remaining:it.qty }); });
+    return { ok:true, id:'DEMO-0001', pushed:true, message:'（デモ）注文番号：DEMO-0001\n\n' + confirmText(p.order) };
+  }
+}
+
+start();
+</script>
+</body>
+</html>
