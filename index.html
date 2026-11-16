@@ -146,7 +146,7 @@ const TYPE_LABEL = {
 };
 const REGULAR = '定期配送（ご自宅へお届け）', TAKKYUBIN = '宅急便';
 const CASH = '現金（配達時）', BANK = '銀行振込';
-const S = { products: [], customer: null, settings: {}, annualSummary: [], timeSlots: [], noshiTypes: [],
+const S = { products: [], customer: null, settings: {}, annualSummary: [], monthlyDone: '', timeSlots: [], noshiTypes: [],
   deliveryMethods: [], paymentMethods: [], type: null, order: null };
 
 const $ = id => document.getElementById(id);
@@ -174,6 +174,7 @@ async function api(action, payload) {
 }
 function applyInit(data) {
   Object.assign(S, { products: data.products || [], settings: data.settings || {}, annualSummary: data.annualSummary || [],
+    monthlyDone: data.monthlyDone || '',
     timeSlots: data.timeSlots || [], noshiTypes: data.noshiTypes || [],
     deliveryMethods: data.deliveryMethods || [], paymentMethods: data.paymentMethods || [] });
 }
@@ -250,8 +251,10 @@ function renderMenu() {
     : '年間契約の受付期間外です' + period;
   // ②
   const usable = usableSummary();
-  $('btnMonthly').disabled = usable.length === 0;
-  $('monthlyNote').textContent = usable.length ? '年間契約の残りの範囲で、品種・数量を自由にご注文いただけます' : '承認済みの年間契約がある方が対象です';
+  $('btnMonthly').disabled = usable.length === 0 || !!S.monthlyDone;
+  $('monthlyNote').textContent = !usable.length ? '承認済みの年間契約がある方が対象です'
+    : S.monthlyDone ? '今月のご注文は受付済みです（毎月のご注文は月に1回です）'
+    : '年間契約の残りの範囲で、月に1回、品種・数量を自由にご注文いただけます';
   // 年間契約の状況
   if (S.annualSummary.length) {
     $('annualCard').classList.remove('hidden');
@@ -282,8 +285,8 @@ function productListHtml(list, prefix, leftOf, leftLabel) {
   if (!list.length) return '<p class="muted">対象の商品がありません。</p>';
   return list.map(p => {
     const left = leftOf ? leftOf(p) : 999;
-    const leftHtml = leftOf ? '<div class="left' + (left > 0 ? '' : ' none') + '">' +
-      (left > 0 ? esc(leftLabel) + ' ' + left + esc(p.unit) : (prefix === 'a' ? '受付終了' : '在庫切れ')) + '</div>' : '';
+    const leftText = left > 0 ? (leftLabel ? esc(leftLabel) + ' ' + left + esc(p.unit) : '') : (prefix === 'a' ? '受付終了' : '在庫切れ');
+    const leftHtml = leftOf ? '<div class="left' + (left > 0 ? '' : ' none') + '" data-left="' + esc(leftText) + '">' + leftText + '</div>' : '';
     return '<div class="item"><div><div class="name">' + esc(p.name) + '</div>' +
       '<div class="price">' + yen(p.price) + ' / ' + esc(p.unit) + (p.description ? '・' + esc(p.description) : '') + '</div>' + leftHtml + '</div>' +
       stepperHtml(prefix + '|' + p.id, Math.min(left, 999)) + '</div>';
@@ -304,11 +307,17 @@ function deliveryHtml() {
     '<div class="info" id="destSelf">' + esc(c.name) + ' 様<br>〒' + esc(c.zip) + ' ' + esc(c.address) + '</div>' +
     '<div id="destOther" class="hidden">' + addressFields('d') + '</div></div>';
 }
-function deliveryMethodHtml() {
-  return '<div class="card"><h2>配送方法</h2><div class="radio" style="flex-direction:column;gap:8px">' +
-    S.deliveryMethods.map((m, i) => '<label><input type="radio" name="dmethod" value="' + esc(m) + '"' + (i === 0 ? ' checked' : '') + '>' + esc(m) + '</label>').join('') +
+function deliveryMethodHtml(methods) {
+  const st = S.settings;
+  const cut = st.afterCutoff ? '<div class="info" style="margin-bottom:8px">今月の定期配送の受付は' + st.regularCutoff + '日までです。' +
+    (st.regularCutoff + 1) + '日以降は、宅急便（銀行振込）でのお届けになります。</div>' : '';
+  return '<div class="card"><h2>配送方法</h2>' + cut + '<div class="radio" style="flex-direction:column;gap:8px">' +
+    methods.map((m, i) => '<label><input type="radio" name="dmethod" value="' + esc(m) + '"' + (i === 0 ? ' checked' : '') + '>' + esc(m) + '</label>').join('') +
     '</div><p class="muted" id="dmethodNote" style="margin:6px 0 0"></p></div>';
 }
+/** 締切日を過ぎたら、宅急便・銀行振込だけにする（②③） */
+function regularMethods() { return S.settings.afterCutoff ? [TAKKYUBIN] : S.deliveryMethods; }
+function regularPaymentHtml() { return S.settings.afterCutoff ? paymentHtml([BANK], BANK) : paymentHtml(S.paymentMethods, CASH); }
 function localDate(days) { const d = new Date(); d.setDate(d.getDate() + days); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
 function dateHtml(withTime, minOverride) {
   let min = localDate(2);
@@ -347,7 +356,7 @@ function recipientHtml(n) {
   const giftProducts = S.products.filter(p => p.gift);
   return '<div class="recipient" data-rcp="' + n + '"><div class="recipient-head"><h3 style="margin:0">お届け先 <span class="rnum"></span></h3>' +
     '<button type="button" class="btn-sub btn-small" style="margin:0" data-remove="' + n + '">削除</button></div>' +
-    addressFields('r' + n) + '<h3>贈る商品</h3>' + productListHtml(giftProducts, 'r' + n, p => p.spotLeft, '在庫 残り') + '</div>';
+    addressFields('r' + n) + '<h3>贈る商品</h3>' + productListHtml(giftProducts, 'r' + n, p => p.spotLeft, '') + '</div>';
 }
 function renumberRecipients() {
   const list = document.querySelectorAll('.recipient');
@@ -370,10 +379,10 @@ function openForm(type) {
       { id: a.productId, name: a.productName, unit: a.unit, price: 0 }, { remaining: a.remaining, contract: a.contract }));
     html += '<div class="card"><h2>今回の注文数量</h2><p class="muted">年間契約の残りの範囲で、品種ごとに1kg単位で選べます。</p>' +
       productListHtml(list, 'm', p => p.remaining, '契約の残り') + '</div>' +
-      deliveryMethodHtml() + deliveryHtml() + dateHtml(false, st.deliveryStart) + paymentHtml(S.paymentMethods, CASH) + noteHtml();
+      deliveryMethodHtml(regularMethods()) + deliveryHtml() + dateHtml(false, st.deliveryStart) + regularPaymentHtml() + noteHtml();
   } else if (type === 'single') {
-    html += '<div class="card"><h2>商品と数量</h2>' + productListHtml(S.products, 's', p => p.spotLeft, '在庫 残り') + '</div>' +
-      deliveryMethodHtml() + deliveryHtml() + dateHtml(false) + paymentHtml(S.paymentMethods, CASH) + noteHtml();
+    html += '<div class="card"><h2>商品と数量</h2>' + productListHtml(S.products, 's', p => p.spotLeft, '') + '</div>' +
+      deliveryMethodHtml(regularMethods()) + deliveryHtml() + dateHtml(false) + regularPaymentHtml() + noteHtml();
   } else if (type === 'gift') {
     recipientCount = 0;
     html += '<div class="card"><h2>お届け先と商品</h2><p class="muted">宅急便でお届けします。複数の方へ贈る場合は「お届け先を追加」を押してください（最大10件）。送料は別途ご連絡します。</p>' +
@@ -401,7 +410,9 @@ $('formBody').addEventListener('click', e => {
   if (t.dataset.step) {
     const input = document.querySelector('[data-qty="' + t.dataset.key + '"]');
     const max = Number(input.max);
-    input.value = Math.min(max, Math.max(0, (Number(input.value) || 0) + Number(t.dataset.step)));
+    const cur = Number(input.value) || 0;
+    if (Number(t.dataset.step) > 0 && cur >= max && max > 0) flashLimit(input);
+    input.value = Math.min(max, Math.max(0, cur + Number(t.dataset.step)));
   } else if (t.dataset.remove) {
     t.closest('.recipient').remove(); renumberRecipients();
   }
@@ -419,9 +430,19 @@ $('formBody').addEventListener('change', e => {
   }
   if (t.dataset.qty) { // 手入力の数量を上限内に収める
     const max = Number(t.max);
+    if ((Number(t.value) || 0) > max && max > 0) flashLimit(t);
     t.value = Math.min(max, Math.max(0, Math.floor(Number(t.value) || 0)));
   }
 });
+
+/** 上限まで選んだときに「ご用意できる上限です」を少しの間表示する */
+function flashLimit(input) {
+  const el = input.closest('.item') && input.closest('.item').querySelector('.left');
+  if (!el) return;
+  el.textContent = 'ご用意できる上限です'; el.classList.add('none');
+  clearTimeout(el._t);
+  el._t = setTimeout(() => { el.textContent = el.dataset.left; el.classList.toggle('none', el.dataset.left === '在庫切れ' || el.dataset.left === '受付終了'); }, 2000);
+}
 
 function qtyItems(prefix, root) {
   return Array.from((root || document).querySelectorAll('[data-qty^="' + prefix + '|"]'))
@@ -563,6 +584,7 @@ const demoDB = {
     { id:'P001', name:'ななつぼし', unit:'kg', price:600, annual:true, gift:true, active:true, description:'', annualLeft:30, spotLeft:10 },
     { id:'P002', name:'ゆめぴりか', unit:'kg', price:700, annual:true, gift:true, active:true, description:'', annualLeft:0, spotLeft:5 },
   ],
+  monthlyDone: '',
   annualSummary: [
     { productId:'P001', productName:'ななつぼし', unit:'kg', contract:20, pending:0, ordered:2, remaining:18 },
     { productId:'P002', productName:'ゆめぴりか', unit:'kg', contract:30, pending:0, ordered:3, remaining:27 },
@@ -570,13 +592,14 @@ const demoDB = {
 };
 async function demoApi(action, p) {
   await new Promise(r => setTimeout(r, 200));
-  const base = () => ({ ok:true, customer: demoDB.customer, products: demoDB.products, settings: demoDB.settings, annualSummary: demoDB.annualSummary,
+  const base = () => ({ ok:true, customer: demoDB.customer, products: demoDB.products, settings: demoDB.settings, annualSummary: demoDB.annualSummary, monthlyDone: demoDB.monthlyDone,
     timeSlots:['指定なし','午前中','14〜16時','16〜18時','18〜20時','19〜21時'], noshiTypes:['なし','御歳暮','御中元','御祝','内祝','御礼','粗品'],
     deliveryMethods:[REGULAR, TAKKYUBIN], paymentMethods:[CASH, BANK] });
   if (action === 'init') return base();
   if (action === 'saveCustomer') { demoDB.customer = p.customer; return { ok:true, customer: p.customer }; }
   if (action === 'order') {
     const msg = '（デモ）注文番号：DEMO-0001\n\n' + confirmText(p.order);
+    if (p.order.type === 'annual_monthly') demoDB.monthlyDone = 'DEMO-0001';
     if (p.order.type === 'annual_monthly') p.order.items.forEach(it => { const a = demoDB.annualSummary.find(x => x.productId === it.productId); a.ordered += it.qty; a.remaining -= it.qty; });
     return { ok:true, id:'DEMO-0001', pushed:true, message: msg };
   }
