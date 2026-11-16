@@ -26,7 +26,7 @@
   .btn:disabled { background:#aaa; }
   .btn-sub { background:#fff; color:var(--text); border:1px solid var(--line); margin-top:10px; }
   .btn-small { width:auto; padding:6px 12px; font-size:14px; font-weight:400; }
-  .type-btn { display:block; text-align:left; background:#fff; border:1px solid var(--line); margin-bottom:10px; padding:14px 16px; font-weight:700; }
+  .type-btn { display:block; text-align:left; background:#fff; color:var(--text); border:1px solid var(--line); margin-bottom:10px; padding:14px 16px; font-weight:700; }
   .type-btn small { display:block; font-weight:400; color:var(--sub); font-size:13px; }
   .type-btn:disabled { opacity:.45; }
   .item { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 0; border-bottom:1px solid var(--line); }
@@ -493,7 +493,10 @@ function confirmText(o) {
   L.push('種類：' + TYPE_LABEL[o.type]); L.push('ご注文者：' + c.name + ' 様'); L.push('');
   if (o.type === 'annual_apply') {
     L.push('■年間の契約数量（' + (st.year || '') + '）');
-    o.items.forEach(it => { const p = productById(it.productId); L.push('・' + p.name + ' 年間 ' + it.qty + p.unit); });
+    o.items.forEach(it => { const p = productById(it.productId); total += p.price * it.qty;
+      L.push('・' + p.name + ' 年間 ' + it.qty + p.unit + '　' + yen(p.price * it.qty)); });
+    L.push(''); L.push('年間合計（目安）：' + yen(total));
+    L.push('※お支払いは、毎月のご注文ごとです。');
     L.push(''); L.push('※農園の承認後に確定します。お届けは ' + (st.deliveryStart || '') + ' からです。');
   } else if (o.type === 'annual_monthly' || o.type === 'single') {
     L.push('■商品'); o.items.forEach(it => { L.push(lineOf(it)); total += productById(it.productId).price * it.qty; });
