@@ -63,6 +63,7 @@
   .stepper button:disabled, .stepper input:disabled { opacity:.4; }
   .demo { background:#fff4e0; color:#a35b00; text-align:center; font-size:13px; padding:4px; }
   .zipnote{font-size:12px;margin:4px 0 0}
+  .applynote{background:#fff8e1;border:1px solid #ffe08a;border-radius:8px;padding:8px 10px;font-size:13px;line-height:1.6;margin:8px 0 4px}
 </style>
 </head>
 <body>
@@ -415,7 +416,10 @@ function openForm(type) {
     html += '<div class="card"><h2>年間の契約数量（' + esc(st.year || '') + '）</h2>' +
       '<p class="muted">1年間でお受け取りになる品種ごとの合計数量を、' + (st.applyStep || 1) + 'kg単位で選んでください。' +
       'お届けのたびに、白米・玄米や袋の大きさを選んでご注文いただけます。先着順で、規定量に達し次第受付を終了します。農園の承認後に確定し、' +
-      esc(st.deliveryStart || '') + ' からお届けします。</p>' + applyListHtml() + '</div>' + noteHtml();
+      esc(st.deliveryStart || '') + ' からお届けします。</p>' +
+      '<div class="applynote">※白米・玄米の<b>合計（kg）</b>を入れてください。<br>' +
+      '例：1年間で白米20kg・玄米10kgの場合 →「30kg」</div>' +
+      applyListHtml() + '</div>' + noteHtml();
   } else if (type === 'annual_monthly') {
     const usable = usableSummary().map(a => a.variety);
     const list = S.products.filter(p => p.annual && usable.indexOf(p.variety) >= 0);
