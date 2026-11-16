@@ -4,6 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>ご注文</title>
+<!-- 注文サーバーへの接続を先に始めておく（表示を少しでも速くするため） -->
+<link rel="preconnect" href="https://script.google.com">
+<link rel="preconnect" href="https://script.googleusercontent.com" crossorigin>
+<link rel="preconnect" href="https://api.line.me">
 <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 <style>
   :root { --green:#06c755; --green-d:#05a647; --bg:#f5f6f7; --line:#dfe3e6; --text:#222; --sub:#666; --red:#d93025; }
@@ -518,7 +522,9 @@ function confirmText(o) {
   const destOf = d => d.useOther === false ? c : d;
   const takkyubin = o.type === 'gift' || o.deliveryMethod === TAKKYUBIN;
   let total = 0;
-  L.push('種類：' + TYPE_LABEL[o.type]); L.push('ご注文者：' + c.name + ' 様'); L.push('');
+  L.push('種類：' + TYPE_LABEL[o.type]);
+  if (o.type === 'annual_monthly') { const d = new Date(); L.push('対象月：' + d.getFullYear() + '年' + (d.getMonth() + 1) + '月分'); }
+  L.push('ご注文者：' + c.name + ' 様'); L.push('');
   if (o.type === 'annual_apply') {
     L.push('■年間の契約数量（' + (st.year || '') + '）');
     o.items.forEach(it => { const p = productById(it.productId); total += p.price * it.qty;
@@ -575,7 +581,7 @@ $('btnSubmit').onclick = async () => {
     $('doneLead').textContent = data.pushed ? 'LINEのトークに内容をお送りしました。'
       : '※LINEのトークへの通知は送れませんでした。公式アカウントを友だち追加してください。';
     $('doneText').textContent = data.message;
-    applyInit(await api('init', {}));
+    applyInit(data.init || await api('init', {})); // 送信の応答にメニュー情報が入っていれば、読み直しを省く
     clearError(); show('vDone');
   } catch (e) { showError(e.message); }
   finally { btn.disabled = false; btn.textContent = '注文を送信する'; }
