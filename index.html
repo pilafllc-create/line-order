@@ -245,10 +245,15 @@ function renderMenu() {
   $('custSummary').textContent = '〒' + c.zip + ' ' + c.address + ' / ' + c.tel;
   // ① 受付期間
   const period = st.applyStart ? '（受付期間 ' + md(st.applyStart) + '〜' + md(st.applyEnd) + '）' : '';
-  $('btnApply').disabled = !st.applyOpen;
-  $('applyNote').textContent = st.applyOpen
-    ? '1年分の数量を予約します。先着順で、規定量に達し次第終了します' + period
-    : '年間契約の受付期間外です' + period;
+  // 申込み済み（承認待ち・承認済）なら1年度に1回まで／全品種の枠がいっぱいなら受付終了
+  const applied = S.annualSummary.some(a => a.contract > 0 || a.pending > 0);
+  const annualProducts = S.products.filter(p => p.annual);
+  const full = annualProducts.length > 0 && annualProducts.every(p => p.annualLeft <= 0);
+  $('btnApply').disabled = !st.applyOpen || applied || full;
+  $('applyNote').textContent = applied ? '今年度の年間契約は、お申込み済みです'
+    : !st.applyOpen ? '年間契約の受付期間外です' + period
+    : full ? '今年度の年間契約は、受付を終了しました'
+    : '1年分の数量を予約します。先着順で、規定量に達し次第終了します' + period;
   // ②
   const usable = usableSummary();
   $('btnMonthly').disabled = usable.length === 0 || !!S.monthlyDone;
@@ -285,7 +290,7 @@ function productListHtml(list, prefix, leftOf, leftLabel) {
   if (!list.length) return '<p class="muted">対象の商品がありません。</p>';
   return list.map(p => {
     const left = leftOf ? leftOf(p) : 999;
-    const leftText = left > 0 ? (leftLabel ? esc(leftLabel) + ' ' + left + esc(p.unit) : '') : (prefix === 'a' ? '受付終了' : '在庫切れ');
+    const leftText = left > 0 ? (leftLabel ? esc(leftLabel) + ' ' + left + esc(p.unit) : '') : (prefix === 'a' ? '受付終了' : '売り切れ');
     const leftHtml = leftOf ? '<div class="left' + (left > 0 ? '' : ' none') + '" data-left="' + esc(leftText) + '">' + leftText + '</div>' : '';
     return '<div class="item"><div><div class="name">' + esc(p.name) + '</div>' +
       '<div class="price">' + yen(p.price) + ' / ' + esc(p.unit) + (p.description ? '・' + esc(p.description) : '') + '</div>' + leftHtml + '</div>' +
@@ -373,7 +378,7 @@ function openForm(type) {
     html += '<div class="card"><h2>年間の契約数量（' + esc(st.year || '') + '）</h2>' +
       '<p class="muted">1年間でお受け取りになる合計数量を、1kg単位で選んでください。先着順で、規定量に達し次第受付を終了します。農園の承認後に確定し、' +
       esc(st.deliveryStart || '') + ' からお届けします。</p>' +
-      productListHtml(S.products.filter(p => p.annual), 'a', p => p.annualLeft, '受付残り') + '</div>' + noteHtml();
+      productListHtml(S.products.filter(p => p.annual), 'a', p => p.annualLeft, '') + '</div>' + noteHtml();
   } else if (type === 'annual_monthly') {
     const list = usableSummary().map(a => Object.assign({}, productById(a.productId) ||
       { id: a.productId, name: a.productName, unit: a.unit, price: 0 }, { remaining: a.remaining, contract: a.contract }));
@@ -439,9 +444,11 @@ $('formBody').addEventListener('change', e => {
 function flashLimit(input) {
   const el = input.closest('.item') && input.closest('.item').querySelector('.left');
   if (!el) return;
-  el.textContent = 'ご用意できる上限です'; el.classList.add('none');
+  const k = (input.dataset.qty || '').split('|')[0];
+  el.textContent = k === 'a' ? 'お申込みできる上限です' : k === 'm' ? '年間契約の残りの上限です' : 'ご用意できる上限です';
+  el.classList.add('none');
   clearTimeout(el._t);
-  el._t = setTimeout(() => { el.textContent = el.dataset.left; el.classList.toggle('none', el.dataset.left === '在庫切れ' || el.dataset.left === '受付終了'); }, 2000);
+  el._t = setTimeout(() => { el.textContent = el.dataset.left; el.classList.toggle('none', el.dataset.left === '売り切れ' || el.dataset.left === '受付終了'); }, 2000);
 }
 
 function qtyItems(prefix, root) {
