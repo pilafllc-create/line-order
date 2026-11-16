@@ -99,7 +99,7 @@
       <h2>注文の種類を選んでください</h2>
       <button class="type-btn" data-type="annual_apply" id="btnApply">① 年間予約の申込み<small id="applyNote">1年分の数量を予約します（先着順・農園の承認後に確定）</small></button>
       <button class="type-btn" data-type="annual_monthly" id="btnMonthly">② 年間予約の毎月注文<small id="monthlyNote">予約済みの数量から毎月ご注文いただけます</small></button>
-      <button class="type-btn" data-type="single">③ 単発の注文<small>1回だけのご注文</small></button>
+      <button class="type-btn" data-type="single">③ スポットの注文<small>年間契約とは別に、1回だけのご注文</small></button>
       <button class="type-btn" data-type="gift">④ 宅急便・地方発送（贈答）<small>贈り物として、ご指定の住所へ発送します</small></button>
     </div>
     <div class="card hidden" id="annualCard">
@@ -146,7 +146,7 @@ const GAS_URL = 'https://script.google.com/macros/s/AKfycbx3MA4sXmPw2dxJ6Xr1Rbbt
 const DEMO = new URLSearchParams(location.search).has('demo');
 const TYPE_LABEL = {
   annual_apply: '①年間予約の申込み', annual_monthly: '②年間予約の毎月注文',
-  single: '③単発の注文', gift: '④宅急便・地方発送',
+  single: '③スポットの注文', gift: '④宅急便・地方発送',
 };
 const REGULAR = '定期配送（ご自宅へお届け）', TAKKYUBIN = '宅急便';
 const CASH = '現金（配達時）', BANK = '銀行振込';
@@ -180,7 +180,8 @@ function applyInit(data) {
   Object.assign(S, { products: data.products || [], settings: data.settings || {}, annualSummary: data.annualSummary || [],
     monthlyDone: data.monthlyDone || '',
     timeSlots: data.timeSlots || [], noshiTypes: data.noshiTypes || [],
-    deliveryMethods: data.deliveryMethods || [], paymentMethods: data.paymentMethods || [] });
+    deliveryMethods: data.deliveryMethods || [], paymentMethods: data.paymentMethods || [],
+    shippingTable: data.shippingTable || [] });
 }
 
 // ---------- 起動 ----------
@@ -472,6 +473,9 @@ function addrErrors(a, label) {
   if (!validTel(a.tel)) e.push(label + 'の電話番号を正しく入力してください。');
   return e;
 }
+function prefError(address, label) {
+  return findPref(address) ? [] : [label + 'の住所は、都道府県から入力してください（送料の計算に使います）。'];
+}
 function readDelivery(errs) {
   const other = document.querySelector('input[name=dest]:checked').value === 'other';
   if (!other) return { useOther: false };
@@ -491,12 +495,17 @@ function buildOrder() {
     o.deliveryMethod = dm ? dm.value : '';
     if (!o.deliveryMethod) errs.push('配送方法を選んでください。');
     o.delivery = readDelivery(errs); o.date = $('fDate').value;
+    if (o.deliveryMethod === TAKKYUBIN) {
+      const addr = o.delivery.useOther ? o.delivery.address : S.customer.address;
+      if (addr) errs.push(...prefError(addr, o.delivery.useOther ? 'お届け先' : '登録'));
+    }
   } else if (S.type === 'gift') {
     o.recipients = Array.from(document.querySelectorAll('.recipient')).map((el, i) => {
       const n = el.dataset.rcp; const a = readAddress('r' + n);
       errs.push(...addrErrors(a, 'お届け先' + (i + 1)));
       a.items = qtyItems('r' + n, el);
       if (!a.items.length) errs.push('お届け先' + (i + 1) + 'の商品と数量を選んでください。');
+      if (a.address) errs.push(...prefError(a.address, 'お届け先' + (i + 1)));
       return a;
     });
     o.noshi = $('fNoshi').value; o.noshiName = $('fNoshiName').value.trim(); o.message = $('fMessage').value.trim();
@@ -516,12 +525,46 @@ function buildOrder() {
   return { o, errs };
 }
 
+// ---------- 送料（サーバーと同じ計算。確定はサーバー側） ----------
+const PREFS = ['北海道','青森県','岩手県','宮城県','秋田県','山形県','福島県','茨城県','栃木県','群馬県','埼玉県','千葉県','東京都','神奈川県',
+  '新潟県','富山県','石川県','福井県','山梨県','長野県','岐阜県','静岡県','愛知県','三重県','滋賀県','京都府','大阪府','兵庫県','奈良県','和歌山県',
+  '鳥取県','島根県','岡山県','広島県','山口県','徳島県','香川県','愛媛県','高知県','福岡県','佐賀県','長崎県','熊本県','大分県','宮崎県','鹿児島県','沖縄県'];
+function findPref(address) { const a = String(address || '').trim(); return PREFS.find(p => a.indexOf(p) === 0) || ''; }
+function calcShipping(address, kg) {
+  const pref = findPref(address);
+  const row = pref ? (S.shippingTable || []).find(r => r.prefs.indexOf(pref) >= 0) : null;
+  const res = { fee: null, pref, kg, boxes: 0 };
+  if (!row || !row.bands.length || kg <= 0) return res;
+  const top = row.bands[row.bands.length - 1];
+  let rest = kg, fee = 0, boxes = 0;
+  while (rest > top.max) { if (top.fee === null) return res; fee += top.fee; rest -= top.max; boxes++; }
+  const band = row.bands.find(b => rest <= b.max);
+  if (!band || band.fee === null) return res;
+  res.fee = fee + band.fee; res.boxes = boxes + 1;
+  return res;
+}
+function shipText(ship) {
+  if (ship.fee === null) return '別途ご連絡';
+  return yen(ship.fee) + '（' + ship.pref + '・' + ship.kg + 'kg' + (ship.boxes > 1 ? '・' + ship.boxes + '箱' : '') + '）';
+}
+const kgOf = items => items.reduce((sum, it) => sum + it.qty, 0);
+
 function confirmText(o) {
   const c = S.customer, st = S.settings; const L = [];
   const lineOf = it => { const p = productById(it.productId); return '・' + p.name + ' × ' + it.qty + p.unit + '　' + yen(p.price * it.qty); };
   const destOf = d => d.useOther === false ? c : d;
   const takkyubin = o.type === 'gift' || o.deliveryMethod === TAKKYUBIN;
   let total = 0;
+  const ships = [];
+  // 商品合計・送料・お支払い合計（宅急便のとき）
+  const totalLines = t => {
+    if (!takkyubin) { L.push('合計：' + yen(t)); return; }
+    const unknown = ships.some(x => x.fee === null);
+    const fee = ships.reduce((sum, x) => sum + (x.fee || 0), 0);
+    L.push('商品合計：' + yen(t));
+    L.push('送料' + (ships.length > 1 ? '合計' : '') + '：' + (unknown ? '別途ご連絡' : (ships.length > 1 ? yen(fee) : shipText(ships[0]))));
+    L.push((o.payment === BANK ? 'お振込合計' : 'お支払い合計') + '：' + (unknown ? yen(t) + '＋送料' : yen(t + fee)));
+  };
   L.push('種類：' + TYPE_LABEL[o.type]);
   if (o.type === 'annual_monthly') { const d = new Date(); L.push('対象月：' + d.getFullYear() + '年' + (d.getMonth() + 1) + '月分'); }
   L.push('ご注文者：' + c.name + ' 様'); L.push('');
@@ -535,14 +578,18 @@ function confirmText(o) {
   } else if (o.type === 'annual_monthly' || o.type === 'single') {
     L.push('■商品'); o.items.forEach(it => { L.push(lineOf(it)); total += productById(it.productId).price * it.qty; });
     const d = destOf(o.delivery); L.push(''); L.push('■お届け先：' + d.name + ' 様'); L.push('〒' + d.zip + ' ' + d.address);
-    L.push(''); L.push('合計：' + yen(total) + (takkyubin ? '（送料別）' : ''));
+    L.push('');
+    if (takkyubin) ships.push(calcShipping(d.address, kgOf(o.items)));
+    totalLines(total);
     L.push('配送方法：' + o.deliveryMethod);
   } else if (o.type === 'gift') {
     o.recipients.forEach((r, i) => {
       L.push('■お届け先' + (i + 1) + '：' + r.name + ' 様'); L.push('〒' + r.zip + ' ' + r.address);
-      r.items.forEach(it => { L.push(lineOf(it)); total += productById(it.productId).price * it.qty; }); L.push('');
+      r.items.forEach(it => { L.push(lineOf(it)); total += productById(it.productId).price * it.qty; });
+      const sh = calcShipping(r.address, kgOf(r.items)); ships.push(sh);
+      L.push('　送料：' + shipText(sh)); L.push('');
     });
-    L.push('合計：' + yen(total) + '（送料別）');
+    totalLines(total);
     L.push('配送方法：' + TAKKYUBIN);
     if (o.noshi !== 'なし') L.push('のし：' + o.noshi + (o.noshiName ? '（' + o.noshiName + '）' : ''));
     if (o.message) L.push('メッセージ：' + o.message);
@@ -607,7 +654,9 @@ async function demoApi(action, p) {
   await new Promise(r => setTimeout(r, 200));
   const base = () => ({ ok:true, customer: demoDB.customer, products: demoDB.products, settings: demoDB.settings, annualSummary: demoDB.annualSummary, monthlyDone: demoDB.monthlyDone,
     timeSlots:['指定なし','午前中','14〜16時','16〜18時','18〜20時','19〜21時'], noshiTypes:['なし','御歳暮','御中元','御祝','内祝','御礼','粗品'],
-    deliveryMethods:[REGULAR, TAKKYUBIN], paymentMethods:[CASH, BANK] });
+    deliveryMethods:[REGULAR, TAKKYUBIN], paymentMethods:[CASH, BANK],
+    shippingTable:[{ region:'関東', prefs:['群馬県','東京都'], bands:[{max:2,fee:800},{max:5,fee:1000},{max:10,fee:1300},{max:30,fee:2000}] },
+                   { region:'北海道', prefs:['北海道'], bands:[{max:2,fee:1500},{max:5,fee:null},{max:10,fee:2200},{max:30,fee:3000}] }] });
   if (action === 'init') return base();
   if (action === 'saveCustomer') { demoDB.customer = p.customer; return { ok:true, customer: p.customer }; }
   if (action === 'order') {
