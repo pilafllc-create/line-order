@@ -62,6 +62,7 @@
   .left.none { color:var(--red); }
   .stepper button:disabled, .stepper input:disabled { opacity:.4; }
   .demo { background:#fff4e0; color:#a35b00; text-align:center; font-size:13px; padding:4px; }
+  .zipnote{font-size:12px;margin:4px 0 0}
 </style>
 </head>
 <body>
@@ -80,9 +81,10 @@
       <p class="muted" id="custLead">初回のみご登録ください。次回からは自動で入力されます。</p>
       <label class="req">お名前</label><input type="text" id="cName" autocomplete="name" placeholder="山田 太郎">
       <label>フリガナ</label><input type="text" id="cKana" placeholder="ヤマダ タロウ">
-      <label class="req">郵便番号（7桁）</label><input type="tel" id="cZip" autocomplete="postal-code" placeholder="123-4567">
+      <label class="req">郵便番号（7桁・ハイフンなしでOK）</label><input type="tel" id="cZip" inputmode="numeric" autocomplete="postal-code" placeholder="0790176" maxlength="8">
+      <p class="zipnote muted" id="cZipNote">郵便番号を入れると、住所の途中まで自動で入ります。</p>
       <label class="req">住所</label><textarea id="cAddress" autocomplete="street-address" placeholder="都道府県から入力してください"></textarea>
-      <label class="req">電話番号</label><input type="tel" id="cTel" autocomplete="tel" placeholder="090-1234-5678">
+      <label class="req">電話番号（ハイフンなしでOK）</label><input type="tel" id="cTel" inputmode="numeric" autocomplete="tel" placeholder="09012345678" maxlength="13">
       <label>メールアドレス</label><input type="email" id="cEmail" autocomplete="email">
     </div>
     <button class="btn" id="btnSaveCustomer">登録して次へ</button>
@@ -334,9 +336,10 @@ function applyListHtml() {
 function addressFields(prefix, v) {
   v = v || {};
   return '<label class="req">お名前</label><input type="text" id="' + prefix + 'Name" value="' + esc(v.name) + '">' +
-    '<label class="req">郵便番号（7桁）</label><input type="tel" id="' + prefix + 'Zip" value="' + esc(v.zip) + '" placeholder="123-4567">' +
+    '<label class="req">郵便番号（7桁・ハイフンなしでOK）</label><input type="tel" inputmode="numeric" maxlength="8" id="' + prefix + 'Zip" value="' + esc(v.zip) + '" placeholder="0790176">' +
+    '<p class="zipnote muted" id="' + prefix + 'ZipNote">郵便番号を入れると、住所の途中まで自動で入ります。</p>' +
     '<label class="req">住所</label><textarea id="' + prefix + 'Address">' + esc(v.address) + '</textarea>' +
-    '<label class="req">電話番号</label><input type="tel" id="' + prefix + 'Tel" value="' + esc(v.tel) + '">';
+    '<label class="req">電話番号（ハイフンなしでOK）</label><input type="tel" inputmode="numeric" maxlength="13" id="' + prefix + 'Tel" value="' + esc(v.tel) + '" placeholder="09012345678">';
 }
 function deliveryHtml() {
   const c = S.customer;
@@ -716,6 +719,54 @@ async function demoApi(action, p) {
 }
 
 start();
+
+// ===== 郵便番号から住所を自動入力（zipcloud・JSONP） =====
+const ZIP_CACHE = {};
+let zipSeq = 0;
+function lookupZip(zip) {
+  if (ZIP_CACHE[zip]) return Promise.resolve(ZIP_CACHE[zip]);
+  return new Promise(resolve => {
+    const cb = '__zipcb' + (++zipSeq);
+    const sc = document.createElement('script');
+    const done = v => { delete window[cb]; sc.remove(); clearTimeout(t); resolve(v); };
+    const t = setTimeout(() => done(null), 5000);
+    window[cb] = res => {
+      const r = res && res.results && res.results[0];
+      const addr = r ? r.address1 + r.address2 + r.address3 : '';
+      if (addr) ZIP_CACHE[zip] = addr;
+      done(addr || '');
+    };
+    sc.onerror = () => done(null);
+    sc.src = 'https://zipcloud.ibsnet.co.jp/api/search?zipcode=' + zip + '&callback=' + cb;
+    document.head.appendChild(sc);
+  });
+}
+document.addEventListener('input', async e => {
+  const el = e.target;
+  if (!el.id || !/Zip$/.test(el.id)) return;
+  const prefix = el.id.slice(0, -3);
+  const addrEl = document.getElementById(prefix + 'Address');
+  const note = document.getElementById(prefix + 'ZipNote');
+  if (!addrEl) return;
+  const zip = normDigits(el.value).replace(/[^0-9]/g, '');
+  if (zip.length !== 7 || el.dataset.lastZip === zip) return;
+  el.dataset.lastZip = zip;
+  const addr = await lookupZip(zip);
+  if (normDigits(el.value).replace(/[^0-9]/g, '') !== zip) return; // 入力が変わった
+  if (addr === null) { if (note) note.textContent = '住所の自動入力ができませんでした。住所を入力してください。'; return; }
+  if (!addr) { if (note) note.textContent = 'この郵便番号の住所が見つかりませんでした。番号をご確認ください。'; return; }
+  const cur = addrEl.value.trim();
+  // 空欄、または前回自動で入れた住所のままなら書き換える（入力済みの番地は消さない）
+  if (!cur || cur === addrEl.dataset.auto) {
+    addrEl.value = addr;
+    addrEl.dataset.auto = addr;
+    if (note) note.textContent = '住所の途中まで入力しました。続けて番地・建物名を入力してください。';
+    addrEl.focus();
+    try { addrEl.setSelectionRange(addr.length, addr.length); } catch (_) {}
+  } else if (cur.indexOf(addr) !== 0) {
+    if (note) note.textContent = 'この郵便番号の住所は「' + addr + '」です。住所をご確認ください。';
+  }
+});
 </script>
 </body>
 </html>
