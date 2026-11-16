@@ -56,6 +56,9 @@
   .spinner { width:36px; height:36px; border:4px solid #ddd; border-top-color:var(--green); border-radius:50%; animation:spin 1s linear infinite; margin:40px auto 12px; }
   @keyframes spin { to { transform:rotate(360deg); } }
   .left { font-size:13px; color:#0a7d3b; }
+  .variety { border:1px solid var(--line); border-radius:10px; padding:4px 12px; margin-bottom:10px; }
+  .vhead { display:flex; justify-content:space-between; align-items:center; padding:8px 0 4px; border-bottom:1px solid var(--line); }
+  .vname { font-weight:700; font-size:16px; }
   .left.none { color:var(--red); }
   .stepper button:disabled, .stepper input:disabled { opacity:.4; }
   .demo { background:#fff4e0; color:#a35b00; text-align:center; font-size:13px; padding:4px; }
@@ -150,7 +153,7 @@ const TYPE_LABEL = {
 };
 const REGULAR = '定期配送（ご自宅へお届け）', TAKKYUBIN = '宅急便';
 const CASH = '現金（配達時）', BANK = '銀行振込';
-const S = { products: [], customer: null, settings: {}, annualSummary: [], monthlyDone: '', timeSlots: [], noshiTypes: [],
+const S = { products: [], varieties: [], customer: null, settings: {}, annualSummary: [], monthlyDone: '', timeSlots: [], noshiTypes: [],
   deliveryMethods: [], paymentMethods: [], type: null, order: null };
 
 const $ = id => document.getElementById(id);
@@ -162,7 +165,10 @@ function show(id) { views.forEach(v => $(v).classList.toggle('hidden', v !== id)
 function showError(msg) { $('err').textContent = msg; $('err').classList.remove('hidden'); window.scrollTo(0, 0); }
 function clearError() { $('err').classList.add('hidden'); }
 function productById(id) { return S.products.find(p => p.id === id); }
-function summaryOf(id) { return S.annualSummary.find(a => a.productId === id); }
+function summaryOf(v) { return S.annualSummary.find(a => a.variety === v); }
+function varietyOf(v) { return S.varieties.find(x => x.name === v) || { name: v, annualLeft: 0, spotLeft: 0, perKg: 0 }; }
+/** その品種のいちばん小さい袋（kg）。これより残りが少なければ注文できない */
+function minBag(v, filter) { const b = S.products.filter(p => p.variety === v && (!filter || filter(p))).map(p => p.bag); return b.length ? Math.min.apply(null, b) : 0; }
 
 // ---------- 通信 ----------
 async function api(action, payload) {
@@ -177,7 +183,7 @@ async function api(action, payload) {
   return data;
 }
 function applyInit(data) {
-  Object.assign(S, { products: data.products || [], settings: data.settings || {}, annualSummary: data.annualSummary || [],
+  Object.assign(S, { products: data.products || [], varieties: data.varieties || [], settings: data.settings || {}, annualSummary: data.annualSummary || [],
     monthlyDone: data.monthlyDone || '',
     timeSlots: data.timeSlots || [], noshiTypes: data.noshiTypes || [],
     deliveryMethods: data.deliveryMethods || [], paymentMethods: data.paymentMethods || [],
@@ -242,7 +248,7 @@ $('btnCancelCustomer').onclick = () => { clearError(); renderMenu(); };
 $('btnEditCustomer').onclick = () => openCustomer(true);
 
 // ---------- メニュー ----------
-function usableSummary() { return S.annualSummary.filter(a => a.remaining > 0); }
+function usableSummary() { return S.annualSummary.filter(a => a.remaining > 0 && a.remaining >= minBag(a.variety, p => p.annual)); }
 
 function renderMenu() {
   const c = S.customer, st = S.settings;
@@ -252,8 +258,8 @@ function renderMenu() {
   const period = st.applyStart ? '（受付期間 ' + md(st.applyStart) + '〜' + md(st.applyEnd) + '）' : '';
   // 申込み済み（承認待ち・承認済）なら1年度に1回まで／全品種の枠がいっぱいなら受付終了
   const applied = S.annualSummary.some(a => a.contract > 0 || a.pending > 0);
-  const annualProducts = S.products.filter(p => p.annual);
-  const full = annualProducts.length > 0 && annualProducts.every(p => p.annualLeft <= 0);
+  const annualVarieties = S.varieties.filter(v => v.annual);
+  const full = annualVarieties.length > 0 && annualVarieties.every(v => v.annualLeft < (st.applyStep || 1));
   $('btnApply').disabled = !st.applyOpen || applied || full;
   $('applyNote').textContent = applied ? '今年度の年間契約は、お申込み済みです'
     : !st.applyOpen ? '年間契約の受付期間外です' + period
@@ -264,7 +270,7 @@ function renderMenu() {
   $('btnMonthly').disabled = usable.length === 0 || !!S.monthlyDone;
   $('monthlyNote').textContent = !usable.length ? '承認済みの年間契約がある方が対象です'
     : S.monthlyDone ? '今月のご注文は受付済みです（毎月のご注文は月に1回です）'
-    : '年間契約の残りの範囲で、月に1回、品種・数量を自由にご注文いただけます';
+    : '年間契約の残りの範囲で、月に1回、品種・袋を自由にご注文いただけます';
   // 年間契約の状況
   if (S.annualSummary.length) {
     $('annualCard').classList.remove('hidden');
@@ -272,7 +278,7 @@ function renderMenu() {
     $('annualList').innerHTML = S.annualSummary.map(a => {
       const pend = a.pending ? '<span class="badge wait">承認待ち ' + a.pending + esc(a.unit) + '</span>' : '';
       const ok = a.contract ? '<span class="badge ok">承認済</span>' : '';
-      return '<div class="item"><div><div class="name">' + esc(a.productName) + ok + pend + '</div>' +
+      return '<div class="item"><div><div class="name">' + esc(a.variety) + ok + pend + '</div>' +
         (a.contract ? '<div class="price">契約 ' + a.contract + esc(a.unit) + '・注文済 ' + a.ordered + esc(a.unit) + '</div>' : '') + '</div>' +
         (a.contract ? '<div><b>残り ' + a.remaining + esc(a.unit) + '</b></div>' : '') + '</div>';
     }).join('') + (st.deliveryStart ? '<p class="muted" style="margin:8px 0 0">年間契約のお届けは ' + esc(st.deliveryStart) + ' からです。</p>' : '');
@@ -284,24 +290,47 @@ function renderMenu() {
 document.querySelectorAll('.type-btn').forEach(b => b.onclick = () => openForm(b.dataset.type));
 
 // ---------- 入力フォーム ----------
-function stepperHtml(key, max) {
+function stepperHtml(key, max, step, extra) {
+  step = step || 1;
   const dis = max <= 0 ? ' disabled' : '';
-  return '<div class="stepper"><button type="button" data-step="-1" data-key="' + key + '"' + dis + '>−</button>' +
-    '<input type="number" inputmode="numeric" min="0" max="' + max + '" value="0" data-qty="' + key + '"' + dis + '>' +
-    '<button type="button" data-step="1" data-key="' + key + '"' + dis + '>＋</button></div>';
+  return '<div class="stepper"><button type="button" data-step="-' + step + '" data-key="' + key + '"' + dis + '>−</button>' +
+    '<input type="number" inputmode="numeric" min="0" max="' + max + '" step="' + step + '" value="0" data-qty="' + key + '"' + (extra || '') + dis + '>' +
+    '<button type="button" data-step="' + step + '" data-key="' + key + '"' + dis + '>＋</button></div>';
 }
-/** list: 商品, leftOf: 商品ごとの残り（上限）, leftLabel: 残り表示の文言 */
-function productListHtml(list, prefix, leftOf, leftLabel) {
+/**
+ * 品種ごとのカード。袋（白米10kg など）ごとに袋数を選ぶ。
+ * leftOf(品種) … その品種の残りkg（上限）。leftLabel が空なら残りの数字は出さない（売り切れのみ表示）
+ */
+function varietyCardsHtml(list, prefix, leftOf, leftLabel) {
   if (!list.length) return '<p class="muted">対象の商品がありません。</p>';
-  return list.map(p => {
-    const left = leftOf ? leftOf(p) : 999;
-    const leftText = left > 0 ? (leftLabel ? esc(leftLabel) + ' ' + left + esc(p.unit) : '') : (prefix === 'a' ? '受付終了' : '売り切れ');
-    const leftHtml = leftOf ? '<div class="left' + (left > 0 ? '' : ' none') + '" data-left="' + esc(leftText) + '">' + leftText + '</div>' : '';
-    return '<div class="item"><div><div class="name">' + esc(p.name) + '</div>' +
-      '<div class="price">' + yen(p.price) + ' / ' + esc(p.unit) + (p.description ? '・' + esc(p.description) : '') + '</div>' + leftHtml + '</div>' +
-      stepperHtml(prefix + '|' + p.id, Math.min(left, 999)) + '</div>';
+  const names = []; list.forEach(p => { if (names.indexOf(p.variety) < 0) names.push(p.variety); });
+  return names.map(v => {
+    const items = list.filter(p => p.variety === v);
+    const left = leftOf(v);
+    const soldOut = left < Math.min.apply(null, items.map(p => p.bag));
+    const leftText = soldOut ? (prefix === 'm' ? '残りがありません' : '売り切れ') : (leftLabel ? esc(leftLabel) + ' ' + left + 'kg' : '');
+    return '<div class="variety" data-left="' + left + '"><div class="vhead"><span class="vname">' + esc(v) + '</span>' +
+      '<span class="left' + (soldOut ? ' none' : '') + '" data-left="' + esc(leftText) + '">' + leftText + '</span></div>' +
+      items.map(p => '<div class="item"><div><div class="name">' + esc((p.kind ? p.kind + ' ' : '') + p.bag + 'kg') + '</div>' +
+        '<div class="price">' + yen(p.price) + '（税込）' + (p.description ? '・' + esc(p.description) : '') + '</div></div>' +
+        stepperHtml(prefix + '|' + p.id, soldOut ? 0 : 999, 1, ' data-kg="' + p.bag + '"') + '</div>').join('') + '</div>';
   }).join('');
 }
+/** 年間契約の申込み：品種ごとのkg */
+function applyListHtml() {
+  const step = S.settings.applyStep || 1;
+  const list = S.varieties.filter(v => v.annual);
+  if (!list.length) return '<p class="muted">対象の品種がありません。</p>';
+  return list.map(v => {
+    const max = Math.floor(v.annualLeft / step) * step;
+    const leftText = max > 0 ? '' : '受付終了';
+    return '<div class="item"><div><div class="name">' + esc(v.name) + '</div>' +
+      (v.perKg ? '<div class="price">目安 ' + yen(Math.round(v.perKg * 10)) + ' / 10kg（白米）</div>' : '') +
+      '<div class="left' + (max > 0 ? '' : ' none') + '" data-left="' + leftText + '">' + leftText + '</div></div>' +
+      '<div style="display:flex;align-items:center;gap:6px">' + stepperHtml('a|' + v.name, max, step) + '<span class="muted">kg</span></div></div>';
+  }).join('');
+}
+
 function addressFields(prefix, v) {
   v = v || {};
   return '<label class="req">お名前</label><input type="text" id="' + prefix + 'Name" value="' + esc(v.name) + '">' +
@@ -366,7 +395,7 @@ function recipientHtml(n) {
   const giftProducts = S.products.filter(p => p.gift);
   return '<div class="recipient" data-rcp="' + n + '"><div class="recipient-head"><h3 style="margin:0">お届け先 <span class="rnum"></span></h3>' +
     '<button type="button" class="btn-sub btn-small" style="margin:0" data-remove="' + n + '">削除</button></div>' +
-    addressFields('r' + n) + '<h3>贈る商品</h3>' + productListHtml(giftProducts, 'r' + n, p => p.spotLeft, '') + '</div>';
+    addressFields('r' + n) + '<h3>贈る商品</h3>' + varietyCardsHtml(giftProducts, 'r' + n, v => varietyOf(v).spotLeft, '') + '</div>';
 }
 function renumberRecipients() {
   const list = document.querySelectorAll('.recipient');
@@ -381,21 +410,21 @@ function openForm(type) {
   let html = '';
   if (type === 'annual_apply') {
     html += '<div class="card"><h2>年間の契約数量（' + esc(st.year || '') + '）</h2>' +
-      '<p class="muted">1年間でお受け取りになる合計数量を、1kg単位で選んでください。先着順で、規定量に達し次第受付を終了します。農園の承認後に確定し、' +
-      esc(st.deliveryStart || '') + ' からお届けします。</p>' +
-      productListHtml(S.products.filter(p => p.annual), 'a', p => p.annualLeft, '') + '</div>' + noteHtml();
+      '<p class="muted">1年間でお受け取りになる品種ごとの合計数量を、' + (st.applyStep || 1) + 'kg単位で選んでください。' +
+      'お届けのたびに、白米・玄米や袋の大きさを選んでご注文いただけます。先着順で、規定量に達し次第受付を終了します。農園の承認後に確定し、' +
+      esc(st.deliveryStart || '') + ' からお届けします。</p>' + applyListHtml() + '</div>' + noteHtml();
   } else if (type === 'annual_monthly') {
-    const list = usableSummary().map(a => Object.assign({}, productById(a.productId) ||
-      { id: a.productId, name: a.productName, unit: a.unit, price: 0 }, { remaining: a.remaining, contract: a.contract }));
-    html += '<div class="card"><h2>今回の注文数量</h2><p class="muted">年間契約の残りの範囲で、品種ごとに1kg単位で選べます。</p>' +
-      productListHtml(list, 'm', p => p.remaining, '契約の残り') + '</div>' +
+    const usable = usableSummary().map(a => a.variety);
+    const list = S.products.filter(p => p.annual && usable.indexOf(p.variety) >= 0);
+    html += '<div class="card"><h2>今回の注文</h2><p class="muted">年間契約の残りの範囲で、品種ごとに袋の数を選んでください。</p>' +
+      varietyCardsHtml(list, 'm', v => (summaryOf(v) || {}).remaining || 0, '契約の残り') + '</div>' +
       deliveryMethodHtml(regularMethods()) + deliveryHtml() + dateHtml(false, st.deliveryStart) + regularPaymentHtml() + noteHtml();
   } else if (type === 'single') {
-    html += '<div class="card"><h2>商品と数量</h2>' + productListHtml(S.products, 's', p => p.spotLeft, '') + '</div>' +
+    html += '<div class="card"><h2>商品と数量</h2>' + varietyCardsHtml(S.products, 's', v => varietyOf(v).spotLeft, '') + '</div>' +
       deliveryMethodHtml(regularMethods()) + deliveryHtml() + dateHtml(false) + regularPaymentHtml() + noteHtml();
   } else if (type === 'gift') {
     recipientCount = 0;
-    html += '<div class="card"><h2>お届け先と商品</h2><p class="muted">宅急便でお届けします。複数の方へ贈る場合は「お届け先を追加」を押してください（最大10件）。送料は別途ご連絡します。</p>' +
+    html += '<div class="card"><h2>お届け先と商品</h2><p class="muted">宅急便でお届けします。複数の方へ贈る場合は「お届け先を追加」を押してください（最大10件）。送料はお届け先ごとに計算します。</p>' +
       '<div id="rcpList"></div><button type="button" class="btn-sub" id="btnAddRcp">＋ お届け先を追加</button></div>' +
       '<div class="card"><h2>のし・メッセージ</h2><label>のし</label><select id="fNoshi">' +
       S.noshiTypes.map(t => '<option>' + esc(t) + '</option>').join('') + '</select>' +
@@ -418,10 +447,10 @@ function openForm(type) {
 $('formBody').addEventListener('click', e => {
   const t = e.target;
   if (t.dataset.step) {
-    const input = document.querySelector('[data-qty="' + t.dataset.key + '"]');
-    const max = Number(input.max);
+    const input = t.parentNode.querySelector('[data-qty="' + t.dataset.key + '"]');
+    const max = qtyMax(input);
     const cur = Number(input.value) || 0;
-    if (Number(t.dataset.step) > 0 && cur >= max && max > 0) flashLimit(input);
+    if (Number(t.dataset.step) > 0 && cur + Number(t.dataset.step) > max && Number(input.max) > 0) flashLimit(input);
     input.value = Math.min(max, Math.max(0, cur + Number(t.dataset.step)));
   } else if (t.dataset.remove) {
     t.closest('.recipient').remove(); renumberRecipients();
@@ -439,21 +468,32 @@ $('formBody').addEventListener('change', e => {
     $('destOther').classList.toggle('hidden', !other); $('destSelf').classList.toggle('hidden', other);
   }
   if (t.dataset.qty) { // 手入力の数量を上限内に収める
-    const max = Number(t.max);
-    if ((Number(t.value) || 0) > max && max > 0) flashLimit(t);
-    t.value = Math.min(max, Math.max(0, Math.floor(Number(t.value) || 0)));
+    const max = qtyMax(t), step = Number(t.step) || 1;
+    if ((Number(t.value) || 0) > max && Number(t.max) > 0) flashLimit(t);
+    t.value = Math.min(max, Math.max(0, Math.floor((Number(t.value) || 0) / step) * step));
   }
 });
 
+/** その入力欄で選べる上限。品種カードの中なら、ほかの袋で使ったkgを差し引いて計算 */
+function qtyMax(input) {
+  const card = input.closest('.variety');
+  if (!card || !input.dataset.kg) return Number(input.max);
+  const left = Number(card.dataset.left) || 0;
+  let used = 0;
+  card.querySelectorAll('[data-qty]').forEach(i => { if (i !== input) used += (Number(i.value) || 0) * Number(i.dataset.kg); });
+  return Math.max(0, Math.min(Number(input.max), Math.floor((left - used) / Number(input.dataset.kg))));
+}
+
 /** 上限まで選んだときに「ご用意できる上限です」を少しの間表示する */
 function flashLimit(input) {
-  const el = input.closest('.item') && input.closest('.item').querySelector('.left');
+  const box = input.closest('.variety') || input.closest('.item');
+  const el = box && box.querySelector('.left');
   if (!el) return;
   const k = (input.dataset.qty || '').split('|')[0];
   el.textContent = k === 'a' ? 'お申込みできる上限です' : k === 'm' ? '年間契約の残りの上限です' : 'ご用意できる上限です';
   el.classList.add('none');
   clearTimeout(el._t);
-  el._t = setTimeout(() => { el.textContent = el.dataset.left; el.classList.toggle('none', el.dataset.left === '売り切れ' || el.dataset.left === '受付終了'); }, 2000);
+  el._t = setTimeout(() => { el.textContent = el.dataset.left; el.classList.toggle('none', ['売り切れ', '受付終了', '残りがありません'].indexOf(el.dataset.left) >= 0); }, 2000);
 }
 
 function qtyItems(prefix, root) {
@@ -487,10 +527,10 @@ function buildOrder() {
   const errs = [];
   const o = { type: S.type, customer: S.customer, note: $('fNote').value.trim() };
   if (S.type === 'annual_apply') {
-    o.items = qtyItems('a'); if (!o.items.length) errs.push('品種と数量を選んでください。');
+    o.items = qtyItems('a').map(i => ({ variety: i.productId, qty: i.qty })); if (!o.items.length) errs.push('品種と数量を選んでください。');
   } else if (S.type === 'annual_monthly' || S.type === 'single') {
     o.items = qtyItems(S.type === 'annual_monthly' ? 'm' : 's');
-    if (!o.items.length) errs.push('品種と数量を選んでください。');
+    if (!o.items.length) errs.push('品種と袋の数を選んでください。');
     const dm = document.querySelector('input[name=dmethod]:checked');
     o.deliveryMethod = dm ? dm.value : '';
     if (!o.deliveryMethod) errs.push('配送方法を選んでください。');
@@ -547,11 +587,11 @@ function shipText(ship) {
   if (ship.fee === null) return '別途ご連絡';
   return yen(ship.fee) + '（' + ship.pref + '・' + ship.kg + 'kg' + (ship.boxes > 1 ? '・' + ship.boxes + '箱' : '') + '）';
 }
-const kgOf = items => items.reduce((sum, it) => sum + it.qty, 0);
+const kgOf = items => items.reduce((sum, it) => sum + it.qty * (productById(it.productId) || { bag: 0 }).bag, 0);
 
 function confirmText(o) {
   const c = S.customer, st = S.settings; const L = [];
-  const lineOf = it => { const p = productById(it.productId); return '・' + p.name + ' × ' + it.qty + p.unit + '　' + yen(p.price * it.qty); };
+  const lineOf = it => { const p = productById(it.productId); return '・' + p.name + ' × ' + it.qty + '袋　' + yen(p.price * it.qty); };
   const destOf = d => d.useOther === false ? c : d;
   const takkyubin = o.type === 'gift' || o.deliveryMethod === TAKKYUBIN;
   let total = 0;
@@ -570,10 +610,10 @@ function confirmText(o) {
   L.push('ご注文者：' + c.name + ' 様'); L.push('');
   if (o.type === 'annual_apply') {
     L.push('■年間の契約数量（' + (st.year || '') + '）');
-    o.items.forEach(it => { const p = productById(it.productId); total += p.price * it.qty;
-      L.push('・' + p.name + ' 年間 ' + it.qty + p.unit + '　' + yen(p.price * it.qty)); });
+    o.items.forEach(it => { const est = Math.round(varietyOf(it.variety).perKg * it.qty); total += est;
+      L.push('・' + it.variety + ' 年間 ' + it.qty + 'kg　目安 ' + yen(est)); });
     L.push(''); L.push('年間合計（目安）：' + yen(total));
-    L.push('※お支払いは、毎月のご注文ごとです。');
+    L.push('※目安は白米の袋の価格で計算しています。お支払いは、ご注文ごと（選んだ袋・種類の価格）です。');
     L.push(''); L.push('※農園の承認後に確定します。お届けは ' + (st.deliveryStart || '') + ' からです。');
   } else if (o.type === 'annual_monthly' || o.type === 'single') {
     L.push('■商品'); o.items.forEach(it => { L.push(lineOf(it)); total += productById(it.productId).price * it.qty; });
@@ -602,8 +642,8 @@ function confirmText(o) {
   if (o.type === 'annual_monthly') {
     L.push(''); L.push('■注文後の年間契約の残り');
     S.annualSummary.filter(a => a.contract > 0).forEach(a => {
-      const it = o.items.find(x => x.productId === a.productId);
-      L.push('・' + a.productName + '　' + (a.remaining - (it ? it.qty : 0)) + a.unit + '（契約' + a.contract + a.unit + '）');
+      const kg = kgOf(o.items.filter(x => (productById(x.productId) || {}).variety === a.variety));
+      L.push('・' + a.variety + '　' + (a.remaining - kg) + 'kg（契約' + a.contract + 'kg）');
     });
   }
   return L.join('\n');
@@ -639,20 +679,28 @@ $('btnAgain').onclick = () => renderMenu();
 // ---------- デモ用（?demo=1 で開いたときだけ使用） ----------
 const demoDB = {
   customer: null,
-  settings: { year: '2026年産', applyStart: '2026-09-01', applyEnd: '2026-12-31', deliveryStart: '2027-01-01', applyOpen: true },
+  settings: { applyStep: 5, taxRate: 8, year: '2026年産', applyStart: '2026-09-01', applyEnd: '2026-12-31', deliveryStart: '2027-01-01', applyOpen: true },
   products: [
-    { id:'P001', name:'ななつぼし', unit:'kg', price:600, annual:true, gift:true, active:true, description:'', annualLeft:30, spotLeft:10 },
-    { id:'P002', name:'ゆめぴりか', unit:'kg', price:700, annual:true, gift:true, active:true, description:'', annualLeft:0, spotLeft:5 },
+    { id:'P101', variety:'ゆめぴりか', kind:'白米', bag:10, price:7020, name:'ゆめぴりか 白米 10kg', unit:'袋', annual:true, gift:true, active:true, description:'' },
+    { id:'P102', variety:'ゆめぴりか', kind:'白米', bag:5, price:3726, name:'ゆめぴりか 白米 5kg', unit:'袋', annual:true, gift:true, active:true, description:'' },
+    { id:'P103', variety:'ゆめぴりか', kind:'玄米', bag:10, price:6480, name:'ゆめぴりか 玄米 10kg', unit:'袋', annual:true, gift:true, active:true, description:'' },
+    { id:'P105', variety:'ゆめぴりか', kind:'玄米', bag:30, price:18360, name:'ゆめぴりか 玄米 30kg', unit:'袋', annual:true, gift:true, active:true, description:'' },
+    { id:'P201', variety:'ななつぼし', kind:'白米', bag:10, price:6696, name:'ななつぼし 白米 10kg', unit:'袋', annual:true, gift:true, active:true, description:'' },
+    { id:'P202', variety:'ななつぼし', kind:'白米', bag:5, price:3564, name:'ななつぼし 白米 5kg', unit:'袋', annual:true, gift:true, active:true, description:'' },
+  ],
+  varieties: [
+    { name:'ゆめぴりか', annual:true, annualLeft:200, spotLeft:20, perKg:702 },
+    { name:'ななつぼし', annual:true, annualLeft:0, spotLeft:3, perKg:669.6 },
   ],
   monthlyDone: '',
   annualSummary: [
-    { productId:'P001', productName:'ななつぼし', unit:'kg', contract:20, pending:0, ordered:2, remaining:18 },
-    { productId:'P002', productName:'ゆめぴりか', unit:'kg', contract:30, pending:0, ordered:3, remaining:27 },
+    { variety:'ゆめぴりか', unit:'kg', contract:30, pending:0, ordered:10, remaining:20 },
+    { variety:'ななつぼし', unit:'kg', contract:30, pending:0, ordered:25, remaining:5 },
   ],
 };
 async function demoApi(action, p) {
   await new Promise(r => setTimeout(r, 200));
-  const base = () => ({ ok:true, customer: demoDB.customer, products: demoDB.products, settings: demoDB.settings, annualSummary: demoDB.annualSummary, monthlyDone: demoDB.monthlyDone,
+  const base = () => ({ ok:true, customer: demoDB.customer, products: demoDB.products, varieties: demoDB.varieties, settings: demoDB.settings, annualSummary: demoDB.annualSummary, monthlyDone: demoDB.monthlyDone,
     timeSlots:['指定なし','午前中','14〜16時','16〜18時','18〜20時','19〜21時'], noshiTypes:['なし','御歳暮','御中元','御祝','内祝','御礼','粗品'],
     deliveryMethods:[REGULAR, TAKKYUBIN], paymentMethods:[CASH, BANK],
     shippingTable:[{ region:'関東', prefs:['群馬県','東京都'], bands:[{max:2,fee:800},{max:5,fee:1000},{max:10,fee:1300},{max:30,fee:2000}] },
@@ -662,7 +710,7 @@ async function demoApi(action, p) {
   if (action === 'order') {
     const msg = '（デモ）注文番号：DEMO-0001\n\n' + confirmText(p.order);
     if (p.order.type === 'annual_monthly') demoDB.monthlyDone = 'DEMO-0001';
-    if (p.order.type === 'annual_monthly') p.order.items.forEach(it => { const a = demoDB.annualSummary.find(x => x.productId === it.productId); a.ordered += it.qty; a.remaining -= it.qty; });
+    if (p.order.type === 'annual_monthly') p.order.items.forEach(it => { const pr = productById(it.productId); const a = demoDB.annualSummary.find(x => x.variety === pr.variety); a.ordered += it.qty * pr.bag; a.remaining -= it.qty * pr.bag; });
     return { ok:true, id:'DEMO-0001', pushed:true, message: msg };
   }
 }
