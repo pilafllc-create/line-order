@@ -155,7 +155,7 @@ const TYPE_LABEL = {
   single: '③スポットの注文', gift: '④宅急便・地方発送',
 };
 const REGULAR = '定期配送（ご自宅へお届け）', TAKKYUBIN = '宅急便';
-const CASH = '現金（配達時）', BANK = '銀行振込';
+const CASH = '現金（配達時）', BANK = 'ゆうちょ振込';
 const S = { products: [], varieties: [], customer: null, settings: {}, annualSummary: [], monthlyDone: '', timeSlots: [], noshiTypes: [],
   deliveryMethods: [], paymentMethods: [], type: null, order: null };
 
@@ -362,15 +362,15 @@ function areaOfAddr(address) {
 function routeFor(address) {
   const R = S.route;
   if (!R || !R.rows || !R.rows.length) {
-    if (R && R.afterCutoff) return { mode: 'legacy', ok: false, message: '今月の定期配送の受付は' + R.regularCutoff + '日までです。' + (R.regularCutoff + 1) + '日以降は、宅急便（銀行振込）でのお届けになります。' };
+    if (R && R.afterCutoff) return { mode: 'legacy', ok: false, message: '今月の定期配送の受付は' + R.regularCutoff + '日までです。' + (R.regularCutoff + 1) + '日以降は、宅急便（ゆうちょ振込）でのお届けになります。' };
     return { mode: 'legacy', ok: true, message: '' };
   }
   const city = areaOfAddr(address);
   const area = R.areas.find(a => a.cities.indexOf(city) >= 0);
-  if (!area) return { mode: 'outside', ok: false, message: 'お届け先は配達エリア外のため、宅急便（銀行振込）でのお届けになります。' };
+  if (!area) return { mode: 'outside', ok: false, message: 'お届け先は配達エリア外のため、宅急便（ゆうちょ振込）でのお届けになります。' };
   const row = R.rows.find(r => r.area === area.name);
-  if (!row) return { mode: 'none', ok: false, area: area.name, message: '今月は' + area.name + 'への配達はありません。宅急便（銀行振込）でのお届けになります。' };
-  if (row.deadline && R.today > row.deadline) return { mode: 'closed', ok: false, area: area.name, message: '今月の' + area.name + 'の配達のご注文は' + row.deadlineLabel + 'で締め切りました。宅急便（銀行振込）でのお届けになります。' };
+  if (!row) return { mode: 'none', ok: false, area: area.name, message: '今月は' + area.name + 'への配達はありません。宅急便（ゆうちょ振込）でのお届けになります。' };
+  if (row.deadline && R.today > row.deadline) return { mode: 'closed', ok: false, area: area.name, message: '今月の' + area.name + 'の配達のご注文は' + row.deadlineLabel + 'で締め切りました。宅急便（ゆうちょ振込）でのお届けになります。' };
   return { mode: 'route', ok: true, area: area.name, date: row.date, dateLabel: row.dateLabel, note: row.note, deadlineLabel: row.deadlineLabel };
 }
 function destAddress() {
@@ -444,7 +444,7 @@ function updateDeliveryNote() {
   const d = document.querySelector('input[name=dmethod]:checked');
   if (!d || !$('dmethodNote')) return;
   $('dmethodNote').textContent = d.value === TAKKYUBIN
-    ? '送料がかかります。お支払いは銀行振込になります。'
+    ? '送料がかかります。お支払いはゆうちょ振込になります。'
     : '農園がご自宅までお届けします。お支払いは配達時の現金か、お振込みです。';
 }
 
