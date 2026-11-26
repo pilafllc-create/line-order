@@ -190,7 +190,7 @@ function applyInit(data) {
     monthlyDone: data.monthlyDone || '',
     timeSlots: data.timeSlots || [], noshiTypes: data.noshiTypes || [],
     deliveryMethods: data.deliveryMethods || [], paymentMethods: data.paymentMethods || [],
-    shippingTable: data.shippingTable || [] });
+    shippingTable: data.shippingTable || [], route: data.deliveryRoute || null });
 }
 
 // ---------- 起動 ----------
@@ -350,17 +350,71 @@ function deliveryHtml() {
     '<div class="info" id="destSelf">' + esc(c.name) + ' 様<br>〒' + esc(c.zip) + ' ' + esc(c.address) + '</div>' +
     '<div id="destOther" class="hidden">' + addressFields('d') + '</div></div>';
 }
-function deliveryMethodHtml(methods) {
-  const st = S.settings;
-  const cut = st.afterCutoff ? '<div class="info" style="margin-bottom:8px">今月の定期配送の受付は' + st.regularCutoff + '日までです。' +
-    (st.regularCutoff + 1) + '日以降は、宅急便（銀行振込）でのお届けになります。</div>' : '';
-  return '<div class="card"><h2>配送方法</h2>' + cut + '<div class="radio" style="flex-direction:column;gap:8px">' +
-    methods.map((m, i) => '<label><input type="radio" name="dmethod" value="' + esc(m) + '"' + (i === 0 ? ' checked' : '') + '>' + esc(m) + '</label>').join('') +
-    '</div><p class="muted" id="dmethodNote" style="margin:6px 0 0"></p></div>';
+// ---------- 配送方法（②③）：お届け先の住所の方面と、今月の配達日程で決める ----------
+function areaOfAddr(address) {
+  const a = String(address || '').replace(/\s/g, '');
+  const pref = findPref(a);
+  if (pref && pref !== '北海道') return pref;
+  const m = a.slice(pref.length).match(/^(.+?郡)?(.+?[市町村])/);
+  return m ? m[2] : '';
 }
-/** 締切日を過ぎたら、宅急便・銀行振込だけにする（②③） */
-function regularMethods() { return S.settings.afterCutoff ? [TAKKYUBIN] : S.deliveryMethods; }
-function regularPaymentHtml() { return S.settings.afterCutoff ? paymentHtml([BANK], BANK) : paymentHtml(S.paymentMethods, CASH); }
+/** サーバーの routeInfo_ と同じ判定（確定はサーバー側） */
+function routeFor(address) {
+  const R = S.route;
+  if (!R || !R.rows || !R.rows.length) {
+    if (R && R.afterCutoff) return { mode: 'legacy', ok: false, message: '今月の定期配送の受付は' + R.regularCutoff + '日までです。' + (R.regularCutoff + 1) + '日以降は、宅急便（銀行振込）でのお届けになります。' };
+    return { mode: 'legacy', ok: true, message: '' };
+  }
+  const city = areaOfAddr(address);
+  const area = R.areas.find(a => a.cities.indexOf(city) >= 0);
+  if (!area) return { mode: 'outside', ok: false, message: 'お届け先は配達エリア外のため、宅急便（銀行振込）でのお届けになります。' };
+  const row = R.rows.find(r => r.area === area.name);
+  if (!row) return { mode: 'none', ok: false, area: area.name, message: '今月は' + area.name + 'への配達はありません。宅急便（銀行振込）でのお届けになります。' };
+  if (row.deadline && R.today > row.deadline) return { mode: 'closed', ok: false, area: area.name, message: '今月の' + area.name + 'の配達のご注文は' + row.deadlineLabel + 'で締め切りました。宅急便（銀行振込）でのお届けになります。' };
+  return { mode: 'route', ok: true, area: area.name, date: row.date, dateLabel: row.dateLabel, note: row.note, deadlineLabel: row.deadlineLabel };
+}
+function destAddress() {
+  const other = document.querySelector('input[name=dest]:checked');
+  if (other && other.value === 'other') return ($('dAddress') || {}).value || '';
+  return S.customer.address;
+}
+function selectedMethod() { const d = document.querySelector('input[name=dmethod]:checked'); return d ? d.value : ''; }
+/** ②③の配送方法・お届け日・お支払いの3つの欄を、お届け先に合わせて描き直す */
+function renderRoute() {
+  if (!$('dmWrap')) return;
+  const prevOk = S.curRoute ? S.curRoute.ok : true;
+  const r = routeFor(destAddress());
+  S.curRoute = r;
+  const methods = r.ok ? [REGULAR, TAKKYUBIN] : [TAKKYUBIN];
+  const keep = selectedMethod();
+  // 宅急便しか選べなかったお届け先から、配達できるお届け先に戻したときは、定期配送を選び直す
+  const sel = r.ok && !prevOk ? REGULAR : (methods.indexOf(keep) >= 0 ? keep : methods[0]);
+  let info = '';
+  if (r.mode === 'route') info = '<div class="info route" style="margin-bottom:8px"><b>【' + esc(r.area) + '】今月の配達日：' + esc(r.dateLabel) + (r.note ? ' ' + esc(r.note) : '') + '</b><br>ご注文の締切：' + esc(r.deadlineLabel) + '</div>';
+  else if (!r.ok) info = '<div class="info" style="margin-bottom:8px">' + esc(r.message) + '</div>';
+  $('dmWrap').innerHTML = '<div class="card"><h2>配送方法</h2>' + info + '<div class="radio" style="flex-direction:column;gap:8px">' +
+    methods.map(m => '<label><input type="radio" name="dmethod" value="' + esc(m) + '"' + (m === sel ? ' checked' : '') + '>' + esc(m) + '</label>').join('') +
+    '</div><p class="muted" id="dmethodNote" style="margin:6px 0 0"></p></div>';
+  renderDateAndPay();
+}
+function renderDateAndPay() {
+  if (!$('dateWrap')) return;
+  const r = S.curRoute || {}, m = selectedMethod();
+  const prevPay = (document.querySelector('input[name=payment]:checked') || {}).value;
+  const prevDate = ($('fTransferDate') || {}).value || '', prevName = ($('fTransferName') || {}).value;
+  if (m === REGULAR && r.mode === 'route') {
+    $('dateWrap').innerHTML = '<div class="card"><h2>お届け予定日</h2><div class="info">' + esc(r.dateLabel) + (r.note ? ' ' + esc(r.note) : '') +
+      '（' + esc(r.area) + 'の配達日）</div><input type="hidden" id="fDate" value=""></div>';
+  } else {
+    $('dateWrap').innerHTML = dateHtml(false, S.type === 'annual_monthly' ? S.settings.deliveryStart : '');
+  }
+  const payMethods = m === TAKKYUBIN ? [BANK] : S.paymentMethods;
+  const def = m === TAKKYUBIN ? BANK : (payMethods.indexOf(prevPay) >= 0 ? prevPay : CASH);
+  $('payWrap').innerHTML = paymentHtml(payMethods, def);
+  if ($('fTransferDate') && prevDate) $('fTransferDate').value = prevDate;
+  if ($('fTransferName') && prevName) $('fTransferName').value = prevName;
+  updateDeliveryNote();
+}
 function localDate(days) { const d = new Date(); d.setDate(d.getDate() + days); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
 function dateHtml(withTime, minOverride) {
   let min = localDate(2);
@@ -390,8 +444,8 @@ function updateDeliveryNote() {
   const d = document.querySelector('input[name=dmethod]:checked');
   if (!d || !$('dmethodNote')) return;
   $('dmethodNote').textContent = d.value === TAKKYUBIN
-    ? '送料は別途ご連絡します。お支払いは銀行振込になります。'
-    : '農園がご自宅までお届けし、その際に代金をお支払いいただきます。';
+    ? '送料がかかります。お支払いは銀行振込になります。'
+    : '農園がご自宅までお届けします。お支払いは配達時の現金か、お振込みです。';
 }
 
 let recipientCount = 0;
@@ -408,7 +462,7 @@ function renumberRecipients() {
 }
 
 function openForm(type) {
-  S.type = type; clearError();
+  S.type = type; clearError(); S.curRoute = null;
   $('title').textContent = TYPE_LABEL[type];
   const st = S.settings;
   let html = '';
@@ -425,10 +479,10 @@ function openForm(type) {
     const list = S.products.filter(p => p.annual && usable.indexOf(p.variety) >= 0);
     html += '<div class="card"><h2>今回の注文</h2><p class="muted">年間契約の残りの範囲で、品種ごとに袋の数を選んでください。</p>' +
       varietyCardsHtml(list, 'm', v => (summaryOf(v) || {}).remaining || 0, '契約の残り') + '</div>' +
-      deliveryMethodHtml(regularMethods()) + deliveryHtml() + dateHtml(false, st.deliveryStart) + regularPaymentHtml() + noteHtml();
+      '<div id="dmWrap"></div>' + deliveryHtml() + '<div id="dateWrap"></div><div id="payWrap"></div>' + noteHtml();
   } else if (type === 'single') {
     html += '<div class="card"><h2>商品と数量</h2>' + varietyCardsHtml(S.products, 's', v => varietyOf(v).spotLeft, '') + '</div>' +
-      deliveryMethodHtml(regularMethods()) + deliveryHtml() + dateHtml(false) + regularPaymentHtml() + noteHtml();
+      '<div id="dmWrap"></div>' + deliveryHtml() + '<div id="dateWrap"></div><div id="payWrap"></div>' + noteHtml();
   } else if (type === 'gift') {
     recipientCount = 0;
     html += '<div class="card"><h2>お届け先と商品</h2><p class="muted">宅急便でお届けします。複数の方へ贈る場合は「お届け先を追加」を押してください（最大10件）。送料はお届け先ごとに計算します。</p>' +
@@ -446,9 +500,16 @@ function openForm(type) {
     $('btnAddRcp').onclick = add; add();
     $('fNoshi').onchange = () => $('noshiNameWrap').classList.toggle('hidden', $('fNoshi').value === 'なし');
   }
+  renderRoute();
   updateDeliveryNote();
   show('vForm');
 }
+
+// 別の住所を入力したら、方面と配達日を見直す
+let routeTimer = 0;
+$('formBody').addEventListener('input', e => {
+  if (e.target.id === 'dAddress' || e.target.id === 'dZip') { clearTimeout(routeTimer); routeTimer = setTimeout(renderRoute, 400); }
+});
 
 // フォーム内のクリック（数量の＋−、お届け先の削除）
 $('formBody').addEventListener('click', e => {
@@ -465,14 +526,12 @@ $('formBody').addEventListener('click', e => {
 });
 $('formBody').addEventListener('change', e => {
   const t = e.target;
-  if (t.name === 'dmethod') {
-    setPayment(t.value === TAKKYUBIN ? BANK : CASH); // 定期配送→現金、宅急便→振込 を初期値にする
-    updateDeliveryNote();
-  }
+  if (t.name === 'dmethod') renderDateAndPay();
   if (t.name === 'payment') setPayment(t.value);
   if (t.name === 'dest') {
     const other = t.value === 'other';
     $('destOther').classList.toggle('hidden', !other); $('destSelf').classList.toggle('hidden', other);
+    renderRoute();
   }
   if (t.dataset.qty) { // 手入力の数量を上限内に収める
     const max = qtyMax(t), step = Number(t.step) || 1;
@@ -541,7 +600,7 @@ function buildOrder() {
     const dm = document.querySelector('input[name=dmethod]:checked');
     o.deliveryMethod = dm ? dm.value : '';
     if (!o.deliveryMethod) errs.push('配送方法を選んでください。');
-    o.delivery = readDelivery(errs); o.date = $('fDate').value;
+    o.delivery = readDelivery(errs); o.date = $('fDate') ? $('fDate').value : '';
     if (o.deliveryMethod === TAKKYUBIN) {
       const addr = o.delivery.useOther ? o.delivery.address : S.customer.address;
       if (addr) errs.push(...prefError(addr, o.delivery.useOther ? 'お届け先' : '登録'));
@@ -629,6 +688,8 @@ function confirmText(o) {
     if (takkyubin) ships.push(calcShipping(d.address, kgOf(o.items)));
     totalLines(total);
     L.push('配送方法：' + o.deliveryMethod);
+    const r = S.curRoute || {};
+    if (o.deliveryMethod === REGULAR && r.mode === 'route') L.push('お届け予定日：' + r.dateLabel + (r.note ? ' ' + r.note : '') + '（' + r.area + '）');
   } else if (o.type === 'gift') {
     o.recipients.forEach((r, i) => {
       L.push('■お届け先' + (i + 1) + '：' + r.name + ' 様'); L.push('〒' + r.zip + ' ' + r.address);
@@ -700,6 +761,10 @@ const demoDB = {
     { name:'ななつぼし', annual:true, annualLeft:0, spotLeft:3, perKg:669.6 },
   ],
   monthlyDone: '',
+  route: (() => { const d = new Date(), ym = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+    return { areas: [{ name:'札幌方面', cities:['札幌市','江別市','石狩市'] }, { name:'帯広方面', cities:['帯広市','音更町','士幌町'] }],
+      rows: [{ area:'札幌方面', date: ym + '-28', dateLabel: (d.getMonth() + 1) + '月28日', deadline: ym + '-27', deadlineLabel: (d.getMonth() + 1) + '月27日', note:'午後', next:'' }],
+      month: ym, today: ym + '-' + String(d.getDate()).padStart(2, '0'), afterCutoff:false, regularCutoff:15 }; })(),
   annualSummary: [
     { variety:'ゆめぴりか', unit:'kg', contract:30, pending:0, ordered:10, remaining:20 },
     { variety:'ななつぼし', unit:'kg', contract:30, pending:0, ordered:25, remaining:5 },
@@ -709,7 +774,7 @@ async function demoApi(action, p) {
   await new Promise(r => setTimeout(r, 200));
   const base = () => ({ ok:true, customer: demoDB.customer, products: demoDB.products, varieties: demoDB.varieties, settings: demoDB.settings, annualSummary: demoDB.annualSummary, monthlyDone: demoDB.monthlyDone,
     timeSlots:['指定なし','午前中','14〜16時','16〜18時','18〜20時','19〜21時'], noshiTypes:['なし','御歳暮','御中元','御祝','内祝','御礼','粗品'],
-    deliveryMethods:[REGULAR, TAKKYUBIN], paymentMethods:[CASH, BANK],
+    deliveryMethods:[REGULAR, TAKKYUBIN], paymentMethods:[CASH, BANK], deliveryRoute: demoDB.route,
     shippingTable:[{ region:'関東', prefs:['群馬県','東京都'], bands:[{max:2,fee:800},{max:5,fee:1000},{max:10,fee:1300},{max:30,fee:2000}] },
                    { region:'北海道', prefs:['北海道'], bands:[{max:2,fee:1500},{max:5,fee:null},{max:10,fee:2200},{max:30,fee:3000}] }] });
   if (action === 'init') return base();
@@ -763,6 +828,7 @@ document.addEventListener('input', async e => {
   // 空欄、または前回自動で入れた住所のままなら書き換える（入力済みの番地は消さない）
   if (!cur || cur === addrEl.dataset.auto) {
     addrEl.value = addr;
+    if (addrEl.id === 'dAddress' && typeof renderRoute === 'function') renderRoute();
     addrEl.dataset.auto = addr;
     if (note) note.textContent = '住所の途中まで入力しました。続けて番地・建物名を入力してください。';
     addrEl.focus();
